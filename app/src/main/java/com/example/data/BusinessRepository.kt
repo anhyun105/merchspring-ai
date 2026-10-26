@@ -125,38 +125,41 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
     }
 
     suspend fun adjustStock(productId: String, newPhysicalStock: Double, reason: String): Result<Unit> {
-        val product = db.productDao().getProductById(productId)
-            ?: return Result.failure(Exception("Product not found"))
-
-        if (newPhysicalStock < product.reservedStock) {
-            return Result.failure(Exception("Physical stock cannot be less than currently reserved stock (${product.reservedStock})"))
+        if (!newPhysicalStock.isFinite() || newPhysicalStock < 0.0) {
+            return Result.failure(IllegalArgumentException("Physical stock must be a finite, non-negative quantity."))
         }
-
-        val delta = newPhysicalStock - product.physicalStock
-        val movement = StockMovementEntity(
-            id = "MOV-${UUID.randomUUID().toString().take(8)}",
-            productId = productId,
-            productName = product.name,
-            timestamp = System.currentTimeMillis(),
-            movementType = MovementType.ADJUSTMENT_CORRECTION,
-            deltaQuantity = delta,
-            physicalBefore = product.physicalStock,
-            physicalAfter = newPhysicalStock,
-            reservedBefore = product.reservedStock,
-            reservedAfter = product.reservedStock,
-            referenceDoc = "STOCK-ADJUST",
-            reason = reason.ifBlank { "Manual stock count adjustment" }
-        )
-
-        db.withTransaction {
+        val result = db.withTransaction {
+            val product = db.productDao().getProductById(productId)
+                ?: return@withTransaction Result.failure<Unit>(IllegalStateException("Product not found."))
+            if (newPhysicalStock < product.reservedStock) {
+                return@withTransaction Result.failure<Unit>(
+                    IllegalArgumentException("Physical stock cannot be less than currently reserved stock (${product.reservedStock}).")
+                )
+            }
+            val delta = newPhysicalStock - product.physicalStock
+            val movement = StockMovementEntity(
+                id = "MOV-${UUID.randomUUID().toString().take(8)}",
+                productId = productId,
+                productName = product.name,
+                timestamp = System.currentTimeMillis(),
+                movementType = MovementType.ADJUSTMENT_CORRECTION,
+                deltaQuantity = delta,
+                physicalBefore = product.physicalStock,
+                physicalAfter = newPhysicalStock,
+                reservedBefore = product.reservedStock,
+                reservedAfter = product.reservedStock,
+                referenceDoc = "STOCK-ADJUST",
+                reason = reason.ifBlank { "Manual stock count adjustment" }
+            )
             db.productDao().updateStock(productId, newPhysicalStock, product.reservedStock)
             db.stockMovementDao().insert(movement)
+            Result.success(Unit)
         }
-
-        checkAndTriggerLowStockAlert(product.copy(physicalStock = newPhysicalStock))
-        return Result.success(Unit)
+        if (result.isSuccess) {
+            db.productDao().getProductById(productId)?.let { checkAndTriggerLowStockAlert(it) }
+        }
+        return result
     }
-
     suspend fun addStock(productId: String, quantity: Double, reason: String): Result<Double> {
         if (!quantity.isFinite() || quantity <= 0.0) {
             return Result.failure(IllegalArgumentException("Stock addition must be a positive finite quantity."))
