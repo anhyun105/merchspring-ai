@@ -160,7 +160,7 @@ class GeminiService {
         val lower = prompt.lowercase().trim()
         if (lower.isBlank()) return null
 
-        val numericLiteral = """(?<![a-z])\\d+(?:\\.\\d+)?(?![a-z])""".toRegex()
+        val numericLiteral = """(?<![a-z])\d+(?:\.\d+)?(?![a-z])""".toRegex()
 
         fun displayQuantity(value: Double): String =
             if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()
