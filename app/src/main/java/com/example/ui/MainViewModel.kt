@@ -442,7 +442,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refundAmountPaise: Long,
         adjustmentType: ReturnAdjustmentType,
         reason: String,
-        items: List<ReturnItemEntity>
+        items: List<ReturnItemEntity>,
+        onResult: (Boolean, String) -> Unit = { _, _ -> }
     ) {
         viewModelScope.launch {
             val result = repository.processReturn(
@@ -452,12 +453,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 reason = reason,
                 items = items
             )
-            if (result.isSuccess) {
+            val succeeded = result.isSuccess
+            val message = if (succeeded) {
                 val ret = result.getOrNull()
-                snackbarMessage.value = "Return #${ret?.returnNumber} recorded! Refund: ${refundAmountPaise.toRupeesString()} (${adjustmentType.name})."
+                "Return #${ret?.returnNumber} recorded. Refund adjustment: ${refundAmountPaise.toRupeesString()} (${adjustmentType.name})."
             } else {
-                snackbarMessage.value = result.exceptionOrNull()?.message ?: "Return processing failed."
+                result.exceptionOrNull()?.message ?: "Return processing failed; no return was recorded."
             }
+            snackbarMessage.value = message
+            onResult(succeeded, message)
         }
     }
 
