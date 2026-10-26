@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ai.ChatMessage
+import com.example.ai.GeminiAnswer
 import com.example.ai.GeminiService
 import com.example.data.BusinessRepository
 import com.example.data.MerchSpringDatabase
@@ -485,8 +486,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val p = products.value.firstOrNull { it.id == proposal.targetEntityId }
                     if (p != null) {
                         val newQty = p.physicalStock + proposal.quantity
-                        repository.adjustStock(p.id, newQty, "AI Assistant Confirmed Restock")
-                        snackbarMessage.value = "Action Applied: Added ${proposal.quantity.toInt()} units to '${p.name}'. New physical stock: ${newQty.toInt()}."
+                        val result = repository.adjustStock(p.id, newQty, "AI Assistant Confirmed Restock")
+                        snackbarMessage.value = if (result.isSuccess) {
+                            "Action Applied: Added ${proposal.quantity} units to '${p.name}'. New physical stock: ${newQty}."
+                        } else {
+                            result.exceptionOrNull()?.message ?: "Could not update stock. No change was confirmed."
+                        }
                     } else {
                         snackbarMessage.value = "Target product not found."
                     }
@@ -515,16 +520,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ActionProposalType.CREATE_PO, ActionProposalType.REORDER_RESTOCK -> {
                     val p = products.value.firstOrNull { it.id == proposal.targetEntityId }
                     if (p != null) {
-                        val sup = suppliers.value.firstOrNull() ?: SampleData.suppliers.first()
+                        val sup = suppliers.value.firstOrNull()
+                        if (sup == null) {
+                            snackbarMessage.value = "Add a supplier before creating a purchase-order draft."
+                            return@launch
+                        }
                         val poId = "PO-${UUID.randomUUID().toString().take(6).uppercase()}"
-                        val total = ((p.costPricePaise * proposal.quantity) * 1.05).toLong()
+                        // This is a tax-exclusive estimate. The owner must review tax and pricing
+                        // in the draft before it can be ordered.
+                        val total = (p.costPricePaise * proposal.quantity).toLong()
                         val po = PurchaseOrderEntity(
                             id = poId,
                             poNumber = poId,
                             supplierId = sup.id,
                             supplierName = sup.name,
                             totalPaise = total,
-                            status = PurchaseStatus.ORDERED
+                            status = PurchaseStatus.DRAFT
                         )
                         val item = PurchaseItemEntity(
                             id = UUID.randomUUID().toString(),
@@ -533,10 +544,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             productName = p.name,
                             orderedQuantity = proposal.quantity,
                             unitCostPaise = p.costPricePaise,
+                            gstRate = p.gstRate,
                             totalPaise = total
                         )
                         repository.createPurchaseOrder(po, listOf(item))
-                        snackbarMessage.value = "Action Applied: Created PO ${po.poNumber} for ${proposal.quantity.toInt()} units of '${p.name}'."
+                        snackbarMessage.value = "Draft PO ${po.poNumber} created. Review supplier, quantities, and tax before ordering."
                     }
                 }
             }
@@ -601,17 +613,19 @@ Pending Confirmed Orders: ${pendingOrdersSummary.ifBlank { "None" }}
 
             isAiThinking.value = false
             if (result.isSuccess) {
-                val reply = result.getOrNull() ?: ""
+                val answer = result.getOrNull() ?: GeminiAnswer(text = "")
                 val modelMsg = ChatMessage(
                     role = "model",
-                    content = reply,
+                    content = answer.text,
                     isThinking = enableThinkingMode.value,
-                    isGrounded = enableSearchGrounding.value,
-                    proposal = proposal
+                    isGrounded = enableSearchGrounding.value && answer.sources.isNotEmpty(),
+                    proposal = proposal,
+                    groundingSources = answer.sources,
+                    searchEntryHtml = answer.searchEntryHtml
                 )
                 chatMessages.value = chatMessages.value + modelMsg
             } else {
-                // If Gemini API is offline or key missing, provide intelligent local fallback response
+                // When Firebase AI Logic is unavailable, provide only deterministic local summaries where possible.
                 val fallbackReply = when {
                     proposal != null -> "I parsed your request into a proposed business action. Please review the details below and tap 'Confirm & Execute' to safely apply it to your database."
                     prompt.lowercase().contains("summary") || prompt.lowercase().contains("sales") || prompt.lowercase().contains("bikri") ->
@@ -620,7 +634,7 @@ Pending Confirmed Orders: ${pendingOrdersSummary.ifBlank { "None" }}
                         "⚠️ **Low Stock Alert**\n" + (if (lowStockNames.isNotBlank()) "The following items require reordering:\n• $lowStockNames" else "All inventory levels are above reorder thresholds!")
                     prompt.lowercase().contains("debt") || prompt.lowercase().contains("customer") || prompt.lowercase().contains("udhaar") ->
                         "💼 **Overdue Customer Balances**\n" + (if (debtors.isNotBlank()) "Pending dues:\n• $debtors" else "No outstanding customer balances.")
-                    else -> "I have processed your request. Current stock valuation is ${metrics.totalValuationPaise.toRupeesString()} across ${pList.size} catalog items."
+                    else -> "The AI service is currently unavailable. Configure Firebase AI Logic and App Check to enable AI responses. Your saved business records remain available in the app."
                 }
 
                 val modelMsg = ChatMessage(
