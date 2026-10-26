@@ -389,48 +389,65 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
         cashRefundsPaise: Long? = null,
         cashExpensesPaise: Long? = null
     ): Result<CashRegisterClosingEntity> {
-        val cashSales = recordedCashSalesPaise ?: run {
-            val orders = db.orderDao().getAllOrders().firstOrNull() ?: emptyList()
-            orders.filter { it.paymentMethod.equals("Cash", ignoreCase = true) }
-                .sumOf { it.paidPaise }
+        if (!Regex("\\d{4}-\\d{2}-\\d{2}").matches(date)) {
+            return Result.failure(IllegalArgumentException("Closing date must use yyyy-MM-dd format."))
         }
-        val digitalSales = recordedNonCashSalesPaise ?: run {
-            val orders = db.orderDao().getAllOrders().firstOrNull() ?: emptyList()
-            orders.filter { !it.paymentMethod.equals("Cash", ignoreCase = true) }
-                .sumOf { it.paidPaise }
+        if (openingCashPaise < 0L || actualCountedCashPaise < 0L ||
+            listOfNotNull(recordedCashSalesPaise, recordedNonCashSalesPaise, cashRefundsPaise, cashExpensesPaise).any { it < 0L }) {
+            return Result.failure(IllegalArgumentException("Cash closing amounts cannot be negative."))
         }
-        val cashRefunds = cashRefundsPaise ?: run {
-            val returns = db.returnDao().getAllReturns().firstOrNull() ?: emptyList()
-            returns.filter { it.adjustmentType == ReturnAdjustmentType.CASH_REFUND || it.adjustmentType == ReturnAdjustmentType.REFUND_CASH }
+
+        return db.withTransaction {
+            if (db.cashRegisterDao().getClosingForDateAndBranch(date, branchId) != null) {
+                return@withTransaction Result.failure<CashRegisterClosingEntity>(
+                    IllegalStateException("A cash closing already exists for $date at branch $branchId. Use the correction process instead of creating a duplicate.")
+                )
+            }
+            val dateFormatter = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            fun fallsOnDate(timestamp: Long): Boolean = dateFormatter.format(Date(timestamp)) == date
+            val orders = db.orderDao().getAllOrders().firstOrNull().orEmpty().filter {
+                it.status == OrderStatus.DISPATCHED && it.branchId == branchId &&
+                    fallsOnDate(it.dispatchedAt ?: it.createdAt)
+            }
+            val cashSales = recordedCashSalesPaise ?: orders
+                .filter { it.paymentMethod.equals("Cash", ignoreCase = true) }
+                .sumOf { it.paidPaise }
+            val digitalSales = recordedNonCashSalesPaise ?: orders
+                .filter { !it.paymentMethod.equals("Cash", ignoreCase = true) && !it.paymentMethod.equals("Credit", ignoreCase = true) }
+                .sumOf { it.paidPaise }
+            val returns = db.returnDao().getAllReturns().firstOrNull().orEmpty().filter {
+                it.branchId == branchId && fallsOnDate(it.createdAt)
+            }
+            val cashRefunds = cashRefundsPaise ?: returns
+                .filter { it.adjustmentType == ReturnAdjustmentType.CASH_REFUND || it.adjustmentType == ReturnAdjustmentType.REFUND_CASH }
                 .sumOf { it.refundAmountPaise }
-        }
-        val cashExpenses = cashExpensesPaise ?: run {
-            val expenses = db.expenseDao().getAllExpenses().firstOrNull() ?: emptyList()
-            expenses.filter { it.paymentMethod.equals("Cash", ignoreCase = true) }
+            val expenses = db.expenseDao().getAllExpenses().firstOrNull().orEmpty().filter {
+                it.date == date && it.branchId == branchId
+            }
+            val cashExpenses = cashExpensesPaise ?: expenses
+                .filter { it.paymentMethod.equals("Cash", ignoreCase = true) }
                 .sumOf { it.amountPaise }
+
+            val expectedCash = openingCashPaise + cashSales - cashRefunds - cashExpenses
+            val variance = actualCountedCashPaise - expectedCash
+            val closing = CashRegisterClosingEntity(
+                id = "CRC-${UUID.randomUUID().toString().take(8)}",
+                date = date,
+                openingCashPaise = openingCashPaise,
+                recordedCashSalesPaise = cashSales,
+                recordedNonCashSalesPaise = digitalSales,
+                cashRefundsPaise = cashRefunds,
+                cashExpensesPaise = cashExpenses,
+                expectedCashPaise = expectedCash,
+                actualCountedCashPaise = actualCountedCashPaise,
+                variancePaise = variance,
+                closingStaffName = closingStaffName.ifBlank { "Staff" },
+                notes = notes,
+                branchId = branchId
+            )
+            db.cashRegisterDao().insertClosing(closing)
+            Result.success(closing)
         }
-
-        val expectedCash = openingCashPaise + cashSales - cashRefunds - cashExpenses
-        val variance = actualCountedCashPaise - expectedCash
-
-        val closing = CashRegisterClosingEntity(
-            id = "CRC-${UUID.randomUUID().toString().take(8)}",
-            date = date,
-            openingCashPaise = openingCashPaise,
-            recordedCashSalesPaise = cashSales,
-            recordedNonCashSalesPaise = digitalSales,
-            cashRefundsPaise = cashRefunds,
-            cashExpensesPaise = cashExpenses,
-            expectedCashPaise = expectedCash,
-            actualCountedCashPaise = actualCountedCashPaise,
-            variancePaise = variance,
-            closingStaffName = closingStaffName.ifBlank { "Staff" },
-            notes = notes,
-            branchId = branchId
-        )
-
-        db.cashRegisterDao().insertClosing(closing)
-        return Result.success(closing)
     }
 
     // -------------------------------------------------------------
