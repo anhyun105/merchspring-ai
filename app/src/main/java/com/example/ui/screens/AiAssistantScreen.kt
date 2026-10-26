@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -14,6 +15,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.viewinterop.AndroidView
+import android.webkit.WebView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -48,6 +52,33 @@ fun AiAssistantScreen(
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        // Make AI data-sharing explicit because prompts and selected business context are
+        // sent to Firebase AI Logic / Gemini for processing.
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = "Privacy notice",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = "Privacy notice: your prompt, recent chat messages, and a business summary are sent to Firebase AI Logic / Gemini. Customer names and balances are included only when you ask about customer dues or payment reminders. Avoid unnecessary sensitive personal information.",
+                    fontSize = 10.sp,
+                    lineHeight = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
         // Controls Header: Thinking Mode & Search Grounding Toggles
         Surface(
             modifier = Modifier
@@ -123,7 +154,7 @@ fun AiAssistantScreen(
             items(messages, key = { it.id }) { msg ->
                 ChatBubble(
                     msg = msg,
-                    onExecuteProposal = { viewModel.executeActionProposal(it) }
+                    onExecuteProposal = { proposal, onResult -> viewModel.executeActionProposal(proposal, onResult) }
                 )
             }
 
@@ -142,7 +173,7 @@ fun AiAssistantScreen(
                             strokeWidth = 2.dp
                         )
                         Text(
-                            text = if (enableThinking) "Thinking with Gemini 4 Argon..." else "Analyzing business database...",
+                            text = if (enableThinking) "Using Gemini high-reasoning mode..." else "Analyzing business database...",
                             fontSize = 12.sp,
                             color = BrandTeal
                         )
@@ -230,9 +261,13 @@ fun AiAssistantScreen(
 @Composable
 fun ChatBubble(
     msg: ChatMessage,
-    onExecuteProposal: (com.example.model.StructuredActionProposal) -> Unit = {}
+    onExecuteProposal: (
+        com.example.model.StructuredActionProposal,
+        (Boolean, String) -> Unit
+    ) -> Unit = { _, onResult -> onResult(false, "Action execution is unavailable.") }
 ) {
     val isUser = msg.role == "user"
+    val uriHandler = LocalUriHandler.current
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -296,12 +331,70 @@ fun ChatBubble(
                         color = if (isUser) BrandTealLight else MaterialTheme.colorScheme.onSurface,
                         lineHeight = 18.sp
                     )
+
+                    // Google Search grounding requires both the Search entry-point panel
+                    // and visible source attribution. JavaScript and file access remain disabled.
+                    msg.searchEntryHtml?.takeIf { !isUser && it.isNotBlank() }?.let { html ->
+                        Spacer(modifier = Modifier.height(8.dp))
+                        AndroidView(
+                            modifier = Modifier.fillMaxWidth().height(86.dp),
+                            factory = { context ->
+                                WebView(context).apply {
+                                    settings.javaScriptEnabled = false
+                                    settings.allowFileAccess = false
+                                    settings.allowContentAccess = false
+                                    isVerticalScrollBarEnabled = false
+                                    isHorizontalScrollBarEnabled = false
+                                    setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                                    loadDataWithBaseURL("https://www.google.com/", html, "text/html", "UTF-8", null)
+                                    tag = html
+                                }
+                            },
+                            update = { webView ->
+                                if (webView.tag != html) {
+                                    webView.loadDataWithBaseURL(
+                                        "https://www.google.com/",
+                                        html,
+                                        "text/html",
+                                        "UTF-8",
+                                        null
+                                    )
+                                    webView.tag = html
+                                }
+                            }
+                        )
+                    }
+
+                    if (!isUser && msg.groundingSources.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Sources",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        msg.groundingSources.forEach { source ->
+                            Text(
+                                text = source.title,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        runCatching { uriHandler.openUri(source.uri) }
+                                    }
+                                    .padding(vertical = 3.dp),
+                                fontSize = 11.sp,
+                                color = BrandTeal
+                            )
+                        }
+                    }
                 }
             }
 
             // If this message contains a structured business action proposal, render confirmation card
             msg.proposal?.let { proposal ->
                 var isExecuted by remember { mutableStateOf(false) }
+                var isExecuting by remember { mutableStateOf(false) }
+                var executionMessage by remember { mutableStateOf<String?>(null) }
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Card(
@@ -328,11 +421,20 @@ fun ChatBubble(
                                 color = BrandTeal
                             )
                             Surface(
-                                color = if (isExecuted) Color(0xFF1B5E20) else StatusAmberContainer,
+                                color = when {
+                                    isExecuted -> Color(0xFF1B5E20)
+                                    isExecuting -> MaterialTheme.colorScheme.secondaryContainer
+                                    else -> StatusAmberContainer
+                                },
                                 shape = RoundedCornerShape(4.dp)
                             ) {
                                 Text(
-                                    text = if (isExecuted) "APPLIED" else "NEEDS CONFIRMATION",
+                                    text = when {
+                                        isExecuted -> "APPLIED"
+                                        isExecuting -> "APPLYING"
+                                        executionMessage != null -> "NOT APPLIED"
+                                        else -> "NEEDS CONFIRMATION"
+                                    },
                                     color = if (isExecuted) Color.White else StatusAmber,
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold,
@@ -347,6 +449,14 @@ fun ChatBubble(
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
+
+                        executionMessage?.let { resultText ->
+                            Text(
+                                text = resultText,
+                                fontSize = 11.sp,
+                                color = if (isExecuted) Color(0xFF1B5E20) else StatusCoral
+                            )
+                        }
 
                         // Details breakdown
                         if (proposal.details.isNotEmpty()) {
@@ -378,18 +488,37 @@ fun ChatBubble(
 
                             Button(
                                 onClick = {
-                                    onExecuteProposal(proposal)
-                                    isExecuted = true
+                                    isExecuting = true
+                                    executionMessage = null
+                                    onExecuteProposal(proposal) { success, message ->
+                                        isExecuting = false
+                                        isExecuted = success
+                                        executionMessage = message
+                                    }
                                 },
+                                enabled = !isExecuting,
                                 colors = ButtonDefaults.buttonColors(containerColor = BrandTeal),
                                 shape = RoundedCornerShape(6.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(38.dp)
                             ) {
-                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MidnightNavy, modifier = Modifier.size(16.dp))
+                                if (isExecuting) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MidnightNavy
+                                    )
+                                } else {
+                                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MidnightNavy, modifier = Modifier.size(16.dp))
+                                }
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Confirm & Execute", color = MidnightNavy, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text(
+                                    if (isExecuting) "Applying..." else "Confirm & Execute",
+                                    color = MidnightNavy,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
                             }
                         } else {
                             Row(

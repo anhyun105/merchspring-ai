@@ -1,5 +1,7 @@
 package com.example
 
+import com.google.firebase.FirebaseApp
+
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -30,8 +32,10 @@ import com.example.ui.theme.*
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppCheckInitializer.install(this)
         enableEdgeToEdge()
         setContent {
             MerchSpringTheme {
@@ -121,7 +125,7 @@ fun MerchSpringApp(viewModel: MainViewModel = viewModel()) {
                         color = Color.White
                     )
                     Text(
-                        text = "GSTIN: ${settings?.gstin ?: "29AAAAA0000A1Z5"}",
+                        text = settings?.gstin?.takeIf { it.isNotBlank() }?.let { "GSTIN: $it" } ?: "GSTIN not configured",
                         fontSize = 11.sp,
                         color = LightSlate
                     )

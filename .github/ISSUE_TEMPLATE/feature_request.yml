@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest a useful improvement to MerchSpring AI
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What user need or workflow is missing?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the expected behavior and who benefits.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches or workarounds you considered.
+    validations:
+      required: false
+  - type: textarea
+    id: impact
+    attributes:
+      label: Data, privacy, and business-rule impact
+      description: Mention stock, payments, invoices, customer data, or database migrations if relevant.
+    validations:
+      required: false

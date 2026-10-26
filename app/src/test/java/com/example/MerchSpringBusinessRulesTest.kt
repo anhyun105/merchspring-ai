@@ -376,39 +376,100 @@ class MerchSpringBusinessRulesTest {
     }
 
     @Test
-    fun testH_doubleReturnOrExcessRefundIsRejected() = runBlocking {
-        // Setup order of ₹1,000 total with ₹800 already refunded
+    fun testH_excessRefundAndOverReturnAreRejected() = runBlocking {
+        // A ₹1,000 dispatched line has already had ₹800 / 0.8 units returned.
+        val product = ProductEntity(
+            id = "PRD-2",
+            name = "Sample",
+            sku = "SKU-2",
+            category = "Test",
+            costPricePaise = 40000L,
+            sellingPricePaise = 100000L,
+            physicalStock = 9.8,
+            reservedStock = 0.0
+        )
+        repository.saveProduct(product)
         val order = OrderEntity(
             id = "ORD-EXCESS-1",
             orderNumber = "ORD-EXCESS-1",
             customerId = "CUS-1",
             customerName = "Buyer",
             status = OrderStatus.DISPATCHED,
-            totalPaise = 100000L, // ₹1,000
-            returnedTotalPaise = 80000L // ₹800 already returned
+            totalPaise = 100000L,
+            returnedTotalPaise = 80000L
         )
         db.orderDao().insertOrUpdate(order)
-
-        // Attempting to refund ₹300 (which exceeds the remaining ₹200) MUST fail
-        val excessItem = ReturnItemEntity(
-            id = "RET-ITEM-2",
-            returnId = "",
-            orderItemId = "ITEM-2",
-            productId = "PRD-2",
-            productName = "Sample",
-            quantity = 1.0,
-            refundUnitPricePaise = 30000L,
-            restocked = false
+        db.orderDao().insertOrderItems(
+            listOf(
+                OrderItemEntity(
+                    id = "ITEM-2",
+                    orderId = "ORD-EXCESS-1",
+                    productId = "PRD-2",
+                    productName = "Sample",
+                    sku = "SKU-2",
+                    quantity = 1.0,
+                    returnedQuantity = 0.8,
+                    unitPricePaise = 100000L,
+                    costPriceSnapshotPaise = 40000L,
+                    gstRate = 0.0,
+                    taxAmountPaise = 0L,
+                    totalPaise = 100000L
+                )
+            )
         )
-        val failResult = repository.processReturn(
+
+        // Only ₹200 remains eligible, so a ₹300 refund must fail.
+        val excessRefund = repository.processReturn(
             orderId = "ORD-EXCESS-1",
             refundAmountPaise = 30000L,
             adjustmentType = ReturnAdjustmentType.CASH_REFUND,
             reason = "Excess attempt",
-            items = listOf(excessItem)
+            items = listOf(
+                ReturnItemEntity(
+                    id = "RET-ITEM-2",
+                    returnId = "",
+                    orderItemId = "ITEM-2",
+                    productId = "PRD-2",
+                    productName = "Sample",
+                    quantity = 0.2,
+                    refundUnitPricePaise = 100000L,
+                    restocked = false
+                )
+            )
         )
-        assertTrue(failResult.isFailure)
-        assertTrue(failResult.exceptionOrNull()?.message?.contains("exceeds eligible order balance") == true)
+        assertTrue(excessRefund.isFailure)
+        assertTrue(
+            excessRefund.exceptionOrNull()?.message
+                ?.contains("remaining eligible order balance") == true
+        )
+
+        // The remaining quantity is 0.2; trying to return 0.3 must also fail.
+        val excessiveQuantity = repository.processReturn(
+            orderId = "ORD-EXCESS-1",
+            refundAmountPaise = 10000L,
+            adjustmentType = ReturnAdjustmentType.CASH_REFUND,
+            reason = "Duplicate return attempt",
+            items = listOf(
+                ReturnItemEntity(
+                    id = "RET-ITEM-3",
+                    returnId = "",
+                    orderItemId = "ITEM-2",
+                    productId = "PRD-2",
+                    productName = "Sample",
+                    quantity = 0.3,
+                    refundUnitPricePaise = 100000L,
+                    restocked = false
+                )
+            )
+        )
+        assertTrue(excessiveQuantity.isFailure)
+        assertTrue(
+            excessiveQuantity.exceptionOrNull()?.message
+                ?.contains("Maximum returnable: 0.19999999999999996") == true ||
+                excessiveQuantity.exceptionOrNull()?.message
+                    ?.contains("Maximum returnable: 0.2") == true
+        )
+        assertEquals(80000L, db.orderDao().getOrderById("ORD-EXCESS-1")!!.returnedTotalPaise)
     }
 
     @Test
@@ -436,6 +497,27 @@ class MerchSpringBusinessRulesTest {
 
     @Test
     fun testJ_multiBranchTransferDeductsSourceAndIncrementsDestination() = runBlocking {
+        // Transfers must reference real branches; the production code validates both IDs.
+        db.branchDao().insertAll(
+            listOf(
+                BranchEntity(
+                    id = "BRANCH-MAIN",
+                    name = "Main Branch",
+                    address = "Test Address",
+                    city = "Patna",
+                    phone = "",
+                    isPrimary = true
+                ),
+                BranchEntity(
+                    id = "BRANCH-IND",
+                    name = "Indiranagar Branch",
+                    address = "Test Address",
+                    city = "Bengaluru",
+                    phone = ""
+                )
+            )
+        )
+
         // Product with 20 units
         val product = ProductEntity(
             id = "PRD-TRF-1",
@@ -469,7 +551,7 @@ class MerchSpringBusinessRulesTest {
         val receiveResult = repository.receiveTransfer(transfer.id, "Indiranagar Staff")
         assertTrue(receiveResult.isSuccess)
 
-        // In this single-device prototype database with branch tracking, receiving increments stock back
+        // Stock is global in this prototype: receipt restores the shared balance but is not branch-isolated accounting.
         p = db.productDao().getProductById("PRD-TRF-1")!!
         assertEquals(20.0, p.physicalStock, 0.001)
 

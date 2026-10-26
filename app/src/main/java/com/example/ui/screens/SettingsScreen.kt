@@ -39,6 +39,7 @@ fun SettingsScreen(
     var invoicePrefix by remember(settings) { mutableStateOf(settings?.invoicePrefix ?: "MS-INV-") }
 
     var showResetDialog by remember { mutableStateOf(false) }
+    var showDemoReloadDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = modifier
@@ -307,7 +308,7 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         OutlinedButton(
-                            onClick = { viewModel.resetDemoData() },
+                            onClick = { showDemoReloadDialog = true },
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -330,6 +331,25 @@ fun SettingsScreen(
         }
     }
 
+    if (showDemoReloadDialog) {
+        AlertDialog(
+            onDismissRequest = { showDemoReloadDialog = false },
+            title = { Text("Replace workspace with demo data?", fontWeight = FontWeight.Bold) },
+            text = { Text("This permanently replaces the current products, customers, orders, stock movements, payments and expenses with fictional sample records. Export anything you need first. This action cannot be undone.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDemoReloadDialog = false
+                        viewModel.resetDemoData()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = StatusCoral, contentColor = Color.White)
+                ) { Text("Replace with Demo Data") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDemoReloadDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
     if (showResetDialog) {
         AlertDialog(
             onDismissRequest = { showResetDialog = false },

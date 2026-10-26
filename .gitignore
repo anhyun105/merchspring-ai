@@ -16,3 +16,12 @@
 local.properties
 .env
 debug.keystore
+# Android signing material and local Firebase config
+*.jks
+*.keystore
+/app/google-services.json
+
+# Generated Android artifacts
+*.apk
+*.aab
+*.hprof
