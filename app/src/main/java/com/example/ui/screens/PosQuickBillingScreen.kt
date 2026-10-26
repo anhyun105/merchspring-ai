@@ -47,6 +47,7 @@ fun PosQuickBillingScreen(viewModel: MainViewModel) {
     var discountRupees by remember { mutableStateOf("") }
     var paymentMethod by remember { mutableStateOf("Cash") }
     var showReturnDialog by remember { mutableStateOf(false) }
+    var isCheckoutInProgress by remember { mutableStateOf(false) }
 
     val coroutineScope = rememberCoroutineScope()
 
@@ -419,7 +420,7 @@ fun PosQuickBillingScreen(viewModel: MainViewModel) {
                     }
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("GST (5% Est.)", fontSize = 12.sp, color = LightSlate)
+                        Text("GST (configured product rates)", fontSize = 12.sp, color = LightSlate)
                         Text(gstPaise.toRupeesString(), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
 
@@ -450,6 +451,7 @@ fun PosQuickBillingScreen(viewModel: MainViewModel) {
                     // Complete Checkout Button
                     Button(
                         onClick = {
+                            if (isCheckoutInProgress) return@Button
                             if (cartItems.isEmpty()) {
                                 viewModel.snackbarMessage.value = "Cart is empty. Add items first."
                                 return@Button
@@ -524,11 +526,16 @@ fun PosQuickBillingScreen(viewModel: MainViewModel) {
                                 paidPaise = paidPaise,
                                 branchId = settings?.activeBranchId ?: "BRANCH-MAIN"
                             )
-                            viewModel.dispatchQuickSale(order, orderItems)
-                            cartItems = emptyMap()
-                            discountRupees = ""
+                            isCheckoutInProgress = true
+                            viewModel.dispatchQuickSale(order, orderItems) { succeeded, _ ->
+                                isCheckoutInProgress = false
+                                if (succeeded) {
+                                    cartItems = emptyMap()
+                                    discountRupees = ""
+                                }
+                            }
                         },
-                        enabled = cartItems.isNotEmpty(),
+                        enabled = cartItems.isNotEmpty() && !isCheckoutInProgress,
                         colors = ButtonDefaults.buttonColors(containerColor = BrandTeal),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier
@@ -539,7 +546,7 @@ fun PosQuickBillingScreen(viewModel: MainViewModel) {
                         Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MidnightNavy)
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Complete Sale & Print (${totalBillPaise.toRupeesString()})",
+                            text = if (isCheckoutInProgress) "Completing Sale..." else "Complete Sale (${totalBillPaise.toRupeesString()})",
                             color = MidnightNavy,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 14.sp
