@@ -377,7 +377,8 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
                 customerName = order.customerName,
                 refundAmountPaise = refundAmountPaise,
                 adjustmentType = adjustmentType,
-                reason = reason.ifBlank { "Customer return / exchange" }
+                reason = reason.ifBlank { "Customer return / exchange" },
+                branchId = order.branchId
             )
 
             db.returnDao().insertReturn(returnEntity)
