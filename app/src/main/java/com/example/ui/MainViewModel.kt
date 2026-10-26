@@ -673,7 +673,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .joinToString { "${it.name}: ${it.outstandingBalancePaise.toRupeesString()}" }
 
             val contextText = """
-Today's Dispatched Sales: ${metrics.todaySalesPaise.toRupeesString()} (${metrics.todayCompletedSalesCount} orders)
+Today's Dispatched Billings (incl. configured tax): ${metrics.todaySalesPaise.toRupeesString()} (${metrics.todayCompletedSalesCount} orders)
 Inventory Valuation: ${metrics.totalValuationPaise.toRupeesString()}
 Total Recorded Expenses: ${metrics.totalExpensesPaise.toRupeesString()}
 Gross Profit: ${metrics.grossProfitPaise.toRupeesString()} (${String.format(java.util.Locale.US, "%.1f", metrics.grossProfitMarginPercent)}% margin)
@@ -711,7 +711,7 @@ Pending Confirmed Orders: ${pendingOrdersSummary.ifBlank { "None" }}
                 val fallbackReply = when {
                     proposal != null -> "I parsed your request into a proposed business action. Please review the details below and tap 'Confirm & Execute' to safely apply it to your database."
                     prompt.lowercase().contains("summary") || prompt.lowercase().contains("sales") || prompt.lowercase().contains("bikri") ->
-                        "📊 **Daily Business Summary**\n• Realized Sales: ${metrics.todaySalesPaise.toRupeesString()} (${metrics.todayCompletedSalesCount} orders dispatched today)\n• Recorded Expenses: ${metrics.totalExpensesPaise.toRupeesString()}\n• Estimated Gross Profit: ${metrics.grossProfitPaise.toRupeesString()} (${String.format(java.util.Locale.US, "%.1f", metrics.grossProfitMarginPercent)}%)\n• Customer Balances Pending: ${metrics.customerReceivablesPaise.toRupeesString()}"
+                        "📊 **Daily Business Summary**\n• Dispatched Billings (incl. configured tax): ${metrics.todaySalesPaise.toRupeesString()} (${metrics.todayCompletedSalesCount} orders dispatched today)\n• Recorded Expenses: ${metrics.totalExpensesPaise.toRupeesString()}\n• Estimated Gross Profit: ${metrics.grossProfitPaise.toRupeesString()} (${String.format(java.util.Locale.US, "%.1f", metrics.grossProfitMarginPercent)}%)\n• Customer Balances Pending: ${metrics.customerReceivablesPaise.toRupeesString()}"
                     prompt.lowercase().contains("stock") || prompt.lowercase().contains("reorder") || prompt.lowercase().contains("low") ->
                         "⚠️ **Low Stock Alert**\n" + (if (lowStockNames.isNotBlank()) "The following items require reordering:\n• $lowStockNames" else "All inventory levels are above reorder thresholds!")
                     prompt.lowercase().contains("debt") || prompt.lowercase().contains("customer") || prompt.lowercase().contains("udhaar") ->
