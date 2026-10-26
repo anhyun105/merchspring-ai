@@ -419,14 +419,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun dispatchQuickSale(order: OrderEntity, items: List<OrderItemEntity>) {
+    fun dispatchQuickSale(
+        order: OrderEntity,
+        items: List<OrderItemEntity>,
+        onResult: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
         viewModelScope.launch {
             val result = repository.createAndDispatchQuickSale(order, items)
-            if (result.isSuccess) {
-                snackbarMessage.value = "Bill #${order.orderNumber} generated successfully (${order.totalPaise.toRupeesString()})!"
+            val success = result.isSuccess
+            val message = if (success) {
+                "Sale #${order.orderNumber} completed (${order.totalPaise.toRupeesString()})."
             } else {
-                snackbarMessage.value = result.exceptionOrNull()?.message ?: "Quick sale failed."
+                result.exceptionOrNull()?.message ?: "Quick sale failed; no sale was recorded."
             }
+            snackbarMessage.value = message
+            onResult(success, message)
         }
     }
 
