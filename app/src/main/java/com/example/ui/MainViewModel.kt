@@ -520,9 +520,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 ActionProposalType.CREATE_PO, ActionProposalType.REORDER_RESTOCK -> {
                     val p = products.value.firstOrNull { it.id == proposal.targetEntityId }
                     if (p != null) {
-                        val sup = suppliers.value.firstOrNull()
+                        val availableSuppliers = suppliers.value
+                        val preferred = p.preferredSupplier.trim()
+                        val preferredMatches = if (preferred.isBlank()) {
+                            emptyList()
+                        } else {
+                            availableSuppliers.filter {
+                                it.id.equals(preferred, ignoreCase = true) ||
+                                    it.name.equals(preferred, ignoreCase = true)
+                            }
+                        }
+                        val sup = preferredMatches.singleOrNull()
+                            ?: availableSuppliers.singleOrNull().takeIf { preferredMatches.isEmpty() }
                         if (sup == null) {
-                            snackbarMessage.value = "Add a supplier before creating a purchase-order draft."
+                            snackbarMessage.value = when {
+                                availableSuppliers.isEmpty() ->
+                                    "Add a supplier before creating a purchase-order draft."
+                                preferredMatches.size > 1 ->
+                                    "More than one supplier matches this product. Open Purchases and select the supplier manually."
+                                else ->
+                                    "Set this product's preferred supplier, or create the purchase order manually to choose the supplier."
+                            }
                             return@launch
                         }
                         val poId = "PO-${UUID.randomUUID().toString().take(6).uppercase()}"
