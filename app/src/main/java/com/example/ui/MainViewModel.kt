@@ -36,6 +36,9 @@ enum class AppScreen(val title: String) {
 data class DashboardMetrics(
     val todaySalesPaise: Long = 0L,
     val periodSalesPaise: Long = 0L,
+    val todayCompletedSalesCount: Int = 0,
+    val allTimeSalesPaise: Long = 0L,
+    val allTimeNetRevenuePaise: Long = 0L,
     val completedSalesCount: Int = 0,
     val pendingOrdersCount: Int = 0,
     val lowStockCount: Int = 0,
@@ -156,12 +159,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         nList: List<NotificationEntity>
     ): DashboardMetrics {
         val completedOrders = oList.filter { it.status == OrderStatus.DISPATCHED }
-        val pendingOrders = oList.filter { it.status == OrderStatus.CONFIRMED }
+        val now = System.currentTimeMillis()
+        val thirtyDaysAgo = now - 30L * 24L * 60L * 60L * 1000L
+        val dateFormatter = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+        val todayKey = dateFormatter.format(java.util.Date(now))
 
-        val totalSalesPaise = completedOrders.sumOf { it.totalPaise }
+        fun dispatchTimestamp(order: OrderEntity): Long = order.dispatchedAt ?: order.createdAt
+        fun isToday(order: OrderEntity): Boolean =
+            dateFormatter.format(java.util.Date(dispatchTimestamp(order))) == todayKey
+
+        val todayOrders = completedOrders.filter(::isToday)
+        val periodOrders = completedOrders.filter { dispatchTimestamp(it) in thirtyDaysAgo..now }
+        val todaySalesPaise = todayOrders.sumOf { it.totalPaise }
+        val periodSalesPaise = periodOrders.sumOf { it.totalPaise }
+        val allTimeSalesPaise = completedOrders.sumOf {
+            (it.totalPaise - it.returnedTotalPaise).coerceAtLeast(0L)
+        }
+        val todayCompletedCount = todayOrders.size
         val completedCount = completedOrders.size
-        val pendingCount = pendingOrders.size
-
+        val pendingCount = oList.count { it.status == OrderStatus.CONFIRMED }
         val lowStockCount = pList.count { it.isLowStock }
         val outOfStockCount = pList.count { it.isOutOfStock }
 
@@ -172,26 +188,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val customerReceivables = cList.sumOf { it.outstandingBalancePaise }
         val supplierPayables = sList.sumOf { it.outstandingPayablePaise }
 
-        // Reconciled Gross Profit: from fulfilled order items snapshots
+        // Estimate gross profit from historical cost snapshots, order discounts and returned
+        // quantities. GST collected on sales is excluded from the gross-margin denominator.
         val allOrderItems = db.orderDao().getAllOrderItems()
         val dispatchedOrderIds = completedOrders.map { it.id }.toSet()
-        val fulfilledItems = allOrderItems.filter { it.orderId in dispatchedOrderIds }
+        val orderItemsByOrder = allOrderItems.filter { it.orderId in dispatchedOrderIds }.groupBy { it.orderId }
+        var grossProfit = 0L
+        var netRevenueBeforeTax = 0L
 
-        val grossProfit = fulfilledItems.sumOf { item ->
-            val revenue = (item.unitPricePaise * item.quantity).toLong()
-            val cost = (item.costPriceSnapshotPaise * item.quantity).toLong()
-            (revenue - cost)
+        for (order in completedOrders) {
+            val items = orderItemsByOrder[order.id].orEmpty()
+            val itemSubtotal = items.sumOf { (it.unitPricePaise * it.quantity).toLong() }
+            val discountBase = order.subtotalPaise.takeIf { it > 0L } ?: itemSubtotal
+            val discount = order.discountPaise.coerceAtLeast(0L)
+
+            for (item in items) {
+                val quantitySold = (item.quantity - item.returnedQuantity).coerceAtLeast(0.0)
+                if (quantitySold <= 0.0) continue
+
+                val originalLineRevenue = (item.unitPricePaise * item.quantity).toLong()
+                val discountShare = if (discountBase > 0L) {
+                    (discount.toDouble() * originalLineRevenue / discountBase).toLong()
+                } else 0L
+                val perUnitDiscountPaise = if (item.quantity > 0.0) {
+                    discountShare.toDouble() / item.quantity
+                } else 0.0
+                val retainedRevenue = (
+                    item.unitPricePaise * quantitySold - perUnitDiscountPaise * quantitySold
+                ).toLong().coerceAtLeast(0L)
+                val retainedCost = (item.costPriceSnapshotPaise * quantitySold).toLong()
+
+                netRevenueBeforeTax += retainedRevenue
+                grossProfit += retainedRevenue - retainedCost
+            }
         }
 
-        val margin = if (totalSalesPaise > 0) {
-            (grossProfit.toDouble() / totalSalesPaise) * 100.0
+        val margin = if (netRevenueBeforeTax > 0L) {
+            (grossProfit.toDouble() / netRevenueBeforeTax.toDouble()) * 100.0
         } else 0.0
 
         val unread = nList.count { !it.isRead }
 
         return DashboardMetrics(
-            todaySalesPaise = totalSalesPaise, // Today/Period sales
-            periodSalesPaise = totalSalesPaise,
+            todaySalesPaise = todaySalesPaise,
+            periodSalesPaise = periodSalesPaise,
+            todayCompletedSalesCount = todayCompletedCount,
+            allTimeSalesPaise = allTimeSalesPaise,
+            allTimeNetRevenuePaise = netRevenueBeforeTax,
             completedSalesCount = completedCount,
             pendingOrdersCount = pendingCount,
             lowStockCount = lowStockCount,
@@ -609,7 +652,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .joinToString { "${it.name}: ${it.outstandingBalancePaise.toRupeesString()}" }
 
             val contextText = """
-Total Realized Sales: ${metrics.todaySalesPaise.toRupeesString()} (${metrics.completedSalesCount} orders)
+Today's Dispatched Sales: ${metrics.todaySalesPaise.toRupeesString()} (${metrics.todayCompletedSalesCount} orders)
 Inventory Valuation: ${metrics.totalValuationPaise.toRupeesString()}
 Total Recorded Expenses: ${metrics.totalExpensesPaise.toRupeesString()}
 Gross Profit: ${metrics.grossProfitPaise.toRupeesString()} (${String.format(java.util.Locale.US, "%.1f", metrics.grossProfitMarginPercent)}% margin)
@@ -647,7 +690,7 @@ Pending Confirmed Orders: ${pendingOrdersSummary.ifBlank { "None" }}
                 val fallbackReply = when {
                     proposal != null -> "I parsed your request into a proposed business action. Please review the details below and tap 'Confirm & Execute' to safely apply it to your database."
                     prompt.lowercase().contains("summary") || prompt.lowercase().contains("sales") || prompt.lowercase().contains("bikri") ->
-                        "📊 **Daily Business Summary**\n• Realized Sales: ${metrics.todaySalesPaise.toRupeesString()} (${metrics.completedSalesCount} fulfilled orders)\n• Recorded Expenses: ${metrics.totalExpensesPaise.toRupeesString()}\n• Estimated Gross Profit: ${metrics.grossProfitPaise.toRupeesString()} (${String.format(java.util.Locale.US, "%.1f", metrics.grossProfitMarginPercent)}%)\n• Customer Balances Pending: ${metrics.customerReceivablesPaise.toRupeesString()}"
+                        "📊 **Daily Business Summary**\n• Realized Sales: ${metrics.todaySalesPaise.toRupeesString()} (${metrics.todayCompletedSalesCount} orders dispatched today)\n• Recorded Expenses: ${metrics.totalExpensesPaise.toRupeesString()}\n• Estimated Gross Profit: ${metrics.grossProfitPaise.toRupeesString()} (${String.format(java.util.Locale.US, "%.1f", metrics.grossProfitMarginPercent)}%)\n• Customer Balances Pending: ${metrics.customerReceivablesPaise.toRupeesString()}"
                     prompt.lowercase().contains("stock") || prompt.lowercase().contains("reorder") || prompt.lowercase().contains("low") ->
                         "⚠️ **Low Stock Alert**\n" + (if (lowStockNames.isNotBlank()) "The following items require reordering:\n• $lowStockNames" else "All inventory levels are above reorder thresholds!")
                     prompt.lowercase().contains("debt") || prompt.lowercase().contains("customer") || prompt.lowercase().contains("udhaar") ->
