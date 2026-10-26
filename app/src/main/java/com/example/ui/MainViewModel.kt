@@ -689,15 +689,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 Today's Dispatched Billings (incl. configured tax): ${metrics.todaySalesPaise.toRupeesString()} (${metrics.todayCompletedSalesCount} orders)
 Inventory Valuation: ${metrics.totalValuationPaise.toRupeesString()}
 Total Recorded Expenses: ${metrics.totalExpensesPaise.toRupeesString()}
-Gross Profit: ${metrics.grossProfitPaise.toRupeesString()} (${String.format(java.util.Locale.US, "%.1f", metrics.grossProfitMarginPercent)}% margin)
+Gross Profit (estimate, before operating expenses): ${metrics.grossProfitPaise.toRupeesString()} (${String.format(java.util.Locale.US, "%.1f", metrics.grossProfitMarginPercent)}% margin)
 Total Customer Receivables (aggregate): ${metrics.customerReceivablesPaise.toRupeesString()}
 Customer-level debtor list: ${debtors}
-Supplier Payables: ${metrics.supplierPayablesPaise.toRupeesString()}""".trimIndent()
+Supplier Payables: ${metrics.supplierPayablesPaise.toRupeesString()}
 Low Stock Items: ${lowStockNames.ifBlank { "None" }}
 Out of Stock Items: ${outOfStockNames.ifBlank { "None" }}
 Pending Confirmed Orders: ${pendingOrdersSummary.ifBlank { "None" }}
             """.trimIndent()
-
             val result = geminiService.sendChat(
                 history = chatMessages.value,
                 userMessage = prompt,
