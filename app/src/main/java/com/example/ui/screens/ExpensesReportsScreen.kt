@@ -190,7 +190,7 @@ fun ExpensesReportsScreen(
 
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("Dispatched Sales Revenue:", fontSize = 13.sp)
-                                    Text(metrics.todaySalesPaise.toRupeesString(), fontWeight = FontWeight.Bold, color = StatusGreen)
+                                    Text(metrics.allTimeSalesPaise.toRupeesString(), fontWeight = FontWeight.Bold, color = StatusGreen)
                                 }
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("Gross Margin on Dispatches:", fontSize = 13.sp)
