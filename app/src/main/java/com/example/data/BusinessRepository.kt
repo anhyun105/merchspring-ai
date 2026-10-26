@@ -932,6 +932,15 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
             }
             val items = db.purchaseDao().getItemsForPO(poId)
             if (items.isEmpty()) return@withTransaction Result.failure<Unit>(IllegalStateException("No items found for this purchase order."))
+            if (items.any {
+                    !it.orderedQuantity.isFinite() || it.orderedQuantity <= 0.0 ||
+                        !it.receivedQuantity.isFinite() || it.receivedQuantity < 0.0 ||
+                        it.receivedQuantity > it.orderedQuantity
+                }) {
+                return@withTransaction Result.failure<Unit>(
+                    IllegalStateException("Purchase order contains invalid ordered or already-received quantities. Reconcile it before receiving more goods.")
+                )
+            }
             val itemsById = items.associateBy { it.id }
             if (receivedMap.keys.any { it !in itemsById.keys }) {
                 return@withTransaction Result.failure<Unit>(IllegalArgumentException("The receipt includes an item that does not belong to this purchase order."))
