@@ -1,10 +1,6 @@
 package com.example
 
-import android.util.Log
 import com.google.firebase.FirebaseApp
-import com.google.firebase.appcheck.FirebaseAppCheck
-import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
-import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -36,26 +32,10 @@ import com.example.ui.theme.*
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
-    private fun configureFirebaseAppCheck() {
-        // Firebase is optional for UI-only development. When configured, install
-        // App Check before creating the view model or sending AI requests.
-        if (FirebaseApp.getApps(this).isEmpty()) return
-
-        runCatching {
-            val providerFactory = if (BuildConfig.DEBUG) {
-                DebugAppCheckProviderFactory.getInstance()
-            } else {
-                PlayIntegrityAppCheckProviderFactory.getInstance()
-            }
-            FirebaseAppCheck.getInstance().installAppCheckProviderFactory(providerFactory)
-        }.onFailure { error ->
-            Log.e("MerchSpring", "Unable to initialize Firebase App Check", error)
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        configureFirebaseAppCheck()
+        AppCheckInitializer.install(this)
         enableEdgeToEdge()
         setContent {
             MerchSpringTheme {
