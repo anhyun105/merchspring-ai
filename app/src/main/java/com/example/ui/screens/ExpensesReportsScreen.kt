@@ -189,8 +189,8 @@ fun ExpensesReportsScreen(
                                 Text("Reconciled P&L Snapshot", fontWeight = FontWeight.Bold, fontSize = 14.sp)
 
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Dispatched Sales Revenue:", fontSize = 13.sp)
-                                    Text(metrics.allTimeSalesPaise.toRupeesString(), fontWeight = FontWeight.Bold, color = StatusGreen)
+                                    Text("Net Sales (excl. GST, net of returns):", fontSize = 13.sp)
+                                    Text(metrics.allTimeNetRevenuePaise.toRupeesString(), fontWeight = FontWeight.Bold, color = StatusGreen)
                                 }
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("Gross Margin on Dispatches:", fontSize = 13.sp)
