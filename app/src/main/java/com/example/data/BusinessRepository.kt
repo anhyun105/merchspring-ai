@@ -1013,12 +1013,22 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
     }
 
     suspend fun recordPurchasePayment(poId: String, amountPaise: Long): Result<Unit> {
-        val po = db.purchaseDao().getPurchaseOrderById(poId)
-            ?: return Result.failure(Exception("Purchase Order $poId not found"))
-
-        val newPaid = (po.paidPaise + amountPaise).coerceAtMost(po.totalPaise)
-
-        db.withTransaction {
+        if (amountPaise <= 0L) {
+            return Result.failure(IllegalArgumentException("Purchase payment must be greater than zero."))
+        }
+        return db.withTransaction {
+            val po = db.purchaseDao().getPurchaseOrderById(poId)
+                ?: return@withTransaction Result.failure<Unit>(IllegalStateException("Purchase Order $poId not found."))
+            val due = po.payableBalancePaise
+            if (due <= 0L) {
+                return@withTransaction Result.failure<Unit>(IllegalStateException("This purchase order has no outstanding balance."))
+            }
+            if (amountPaise > due) {
+                return@withTransaction Result.failure<Unit>(
+                    IllegalArgumentException("Payment exceeds the purchase order balance of ${due.toRupeesString()}.")
+                )
+            }
+            val newPaid = po.paidPaise + amountPaise
             db.purchaseDao().insertOrUpdate(po.copy(paidPaise = newPaid))
 
             val supplier = db.supplierDao().getSupplierById(po.supplierId)
@@ -1026,15 +1036,17 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
                 val newPayable = (supplier.outstandingPayablePaise - amountPaise).coerceAtLeast(0L)
                 db.supplierDao().insertOrUpdate(supplier.copy(outstandingPayablePaise = newPayable))
             }
+            Result.success(Unit)
         }
-
-        return Result.success(Unit)
     }
 
     // -------------------------------------------------------------
     // Other Modules
     // -------------------------------------------------------------
     suspend fun recordExpense(expense: ExpenseEntity) {
+        require(expense.amountPaise > 0L) { "Expense amount must be greater than zero." }
+        require(expense.category.isNotBlank()) { "Expense category is required." }
+        require(Regex("""\d{4}-\d{2}-\d{2}""").matches(expense.date)) { "Expense date must use yyyy-MM-dd format." }
         db.expenseDao().insert(expense)
     }
 
