@@ -660,7 +660,7 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
                 ReorderRecommendation(
                     product = product,
                     dailySalesVelocity = velocity,
-                    daysOfCoverRemaining = daysOfCover.takeIf { it.isFinite() } ?: 0.0,
+                    daysOfCoverRemaining = daysOfCover,
                     recommendedOrderQty = roundedQty,
                     estimatedCostPaise = estimatedCost,
                     reasonExplanation = reason
