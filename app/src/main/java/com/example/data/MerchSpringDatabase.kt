@@ -55,7 +55,10 @@ abstract class MerchSpringDatabase : RoomDatabase() {
                     context.applicationContext,
                     MerchSpringDatabase::class.java,
                     "merchspring_business.db"
-                ).fallbackToDestructiveMigration(true).build()
+                )
+                // Never silently erase local business records during a schema upgrade.
+                // Add an explicit Room Migration before incrementing the database version.
+                .build()
                 INSTANCE = instance
                 instance
             }
