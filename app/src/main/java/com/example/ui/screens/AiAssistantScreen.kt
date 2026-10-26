@@ -52,6 +52,33 @@ fun AiAssistantScreen(
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        // Make AI data-sharing explicit because prompts and selected business context are
+        // sent to Firebase AI Logic / Gemini for processing.
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = RoundedCornerShape(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Info,
+                    contentDescription = "Privacy notice",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = "Privacy notice: your prompt, recent chat messages, and a business summary are sent to Firebase AI Logic / Gemini. Customer names and balances are included only when you ask about customer dues or payment reminders. Avoid unnecessary sensitive personal information.",
+                    fontSize = 10.sp,
+                    lineHeight = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
         // Controls Header: Thinking Mode & Search Grounding Toggles
         Surface(
             modifier = Modifier
