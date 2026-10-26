@@ -674,7 +674,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .joinToString { "${it.orderNumber} for ${it.customerName} (${it.totalPaise.toRupeesString()})" }
             val lowerPrompt = prompt.lowercase(java.util.Locale.ROOT)
             val asksForCustomerDetail = listOf(
-                "customer", "debt", "debtor", "udhaar", "outstanding", "payment reminder", "payment reminder", "dues"
+                "customer due", "customer dues", "customer balance", "customer balances",
+                "customer outstanding", "outstanding customer", "debt", "debtor", "udhaar",
+                "payment reminder", "who owes", "who has not paid", "receivable", "receivables", "dues"
             ).any { it in lowerPrompt }
             val cList = customers.value
             val debtors = if (asksForCustomerDetail) {
