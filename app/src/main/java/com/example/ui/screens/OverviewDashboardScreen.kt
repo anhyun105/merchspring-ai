@@ -225,9 +225,9 @@ fun OverviewDashboardScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     MetricCard(
-                        title = "All-Time Sales",
-                        value = metrics.allTimeSalesPaise.toRupeesString(),
-                        subtitle = "${metrics.completedSalesCount} fulfilled orders, net of recorded returns",
+                        title = "Net Sales (excl. GST)",
+                        value = metrics.allTimeNetRevenuePaise.toRupeesString(),
+                        subtitle = "${metrics.completedSalesCount} fulfilled orders, less recorded returns and discounts",
                         icon = Icons.Default.TrendingUp,
                         iconTint = StatusGreen,
                         modifier = Modifier.weight(1f),
