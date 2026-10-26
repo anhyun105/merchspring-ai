@@ -28,9 +28,6 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v6
         with:
@@ -38,8 +35,14 @@ jobs:
 
       - name: Install required Android SDK packages
         run: |
-          yes | sdkmanager --licenses
-          sdkmanager "platforms;android-36.1" "build-tools;36.0.0"
+          set -euo pipefail
+          echo "ANDROID_HOME=${ANDROID_HOME:-not set}"
+          test -n "${ANDROID_HOME:-}" || { echo "ANDROID_HOME is missing on this runner" >&2; exit 1; }
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print 2>/dev/null | sort -V | tail -n 1)"
+          test -n "$SDKMANAGER" || { echo "Could not find sdkmanager under $ANDROID_HOME/cmdline-tools" >&2; exit 1; }
+          yes | "$SDKMANAGER" --licenses
+          "$SDKMANAGER" "platforms;android-36.1" "build-tools;36.0.0"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
       - name: Create an ephemeral debug signing key
         run: |
