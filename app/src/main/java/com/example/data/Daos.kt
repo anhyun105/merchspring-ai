@@ -114,6 +114,9 @@ interface CashRegisterDao {
     @Query("SELECT * FROM cash_register_closings WHERE date = :date LIMIT 1")
     suspend fun getClosingForDate(date: String): CashRegisterClosingEntity?
 
+    @Query("SELECT * FROM cash_register_closings WHERE date = :date AND branchId = :branchId LIMIT 1")
+    suspend fun getClosingForDateAndBranch(date: String, branchId: String): CashRegisterClosingEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertClosing(closing: CashRegisterClosingEntity)
 }
