@@ -270,103 +270,110 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
         reason: String,
         items: List<ReturnItemEntity>
     ): Result<ReturnEntity> {
-        val order = db.orderDao().getOrderById(orderId)
-            ?: return Result.failure(Exception("Order $orderId not found"))
-
-        if (order.status != OrderStatus.DISPATCHED) {
-            return Result.failure(Exception("Only dispatched orders can be returned or exchanged."))
+        if (refundAmountPaise < 0L) return Result.failure(IllegalArgumentException("Refund cannot be negative."))
+        if (items.isEmpty()) return Result.failure(IllegalArgumentException("Select at least one item for the return or exchange."))
+        if (items.any { !it.quantity.isFinite() || it.quantity <= 0.0 }) {
+            return Result.failure(IllegalArgumentException("Every returned quantity must be a positive finite number."))
         }
 
-        // Validate refund total limit to prevent duplicate/excess refund
-        val maxAllowableRefund = (order.totalPaise - order.returnedTotalPaise).coerceAtLeast(0L)
-        if (refundAmountPaise > maxAllowableRefund) {
-            return Result.failure(
-                Exception("Refund of ${refundAmountPaise.toRupeesString()} exceeds eligible order balance (remaining: ${maxAllowableRefund.toRupeesString()})")
-            )
-        }
-
-        val originalItems = db.orderDao().getItemsForOrder(orderId)
-        val originalItemMap = originalItems.associateBy { it.id }
-
-        // Validate returned quantities
-        for (retItem in items) {
-            val origItem = originalItemMap[retItem.orderItemId]
-                ?: return Result.failure(Exception("Order item not found for return: ${retItem.productName}"))
-
-            val availableToReturn = origItem.quantity - origItem.returnedQuantity
-            if (retItem.quantity > availableToReturn) {
-                return Result.failure(
-                    Exception("Cannot return ${retItem.quantity} units of '${retItem.productName}'. Max returnable: $availableToReturn")
+        return db.withTransaction {
+            val order = db.orderDao().getOrderById(orderId)
+                ?: return@withTransaction Result.failure<ReturnEntity>(IllegalStateException("Order $orderId not found."))
+            if (order.status != OrderStatus.DISPATCHED) {
+                return@withTransaction Result.failure<ReturnEntity>(IllegalStateException("Only dispatched orders can be returned or exchanged."))
+            }
+            val maxAllowableRefund = (order.totalPaise - order.returnedTotalPaise).coerceAtLeast(0L)
+            if (refundAmountPaise > maxAllowableRefund) {
+                return@withTransaction Result.failure<ReturnEntity>(
+                    IllegalArgumentException("Refund exceeds the remaining eligible order balance of ${maxAllowableRefund.toRupeesString()}.")
                 )
             }
-        }
 
-        val returnNumber = "MS-RET-${System.currentTimeMillis().toString().takeLast(4)}"
-        val returnId = "RET-${UUID.randomUUID().toString().take(8)}"
+            val originalItems = db.orderDao().getItemsForOrder(orderId)
+            val originalItemMap = originalItems.associateBy { it.id }
+            val quantitiesByOrderItem = items.groupBy { it.orderItemId }
+            for ((orderItemId, requestedItems) in quantitiesByOrderItem) {
+                val original = originalItemMap[orderItemId]
+                    ?: return@withTransaction Result.failure<ReturnEntity>(IllegalArgumentException("A selected return item does not belong to this order."))
+                if (requestedItems.any { it.productId != original.productId }) {
+                    return@withTransaction Result.failure<ReturnEntity>(IllegalArgumentException("Returned product does not match the original order item '${original.productName}'."))
+                }
+                val requestedQuantity = requestedItems.sumOf { it.quantity }
+                val availableToReturn = (original.quantity - original.returnedQuantity).coerceAtLeast(0.0)
+                if (!requestedQuantity.isFinite() || requestedQuantity > availableToReturn) {
+                    return@withTransaction Result.failure<ReturnEntity>(
+                        IllegalArgumentException("Cannot return $requestedQuantity units of '${original.productName}'. Maximum returnable: $availableToReturn.")
+                    )
+                }
+            }
 
-        val returnEntity = ReturnEntity(
-            id = returnId,
-            returnNumber = returnNumber,
-            orderId = order.id,
-            orderNumber = order.orderNumber,
-            customerId = order.customerId,
-            customerName = order.customerName,
-            refundAmountPaise = refundAmountPaise,
-            adjustmentType = adjustmentType,
-            reason = reason.ifBlank { "Customer return / exchange" }
-        )
+            val restockByProduct = items.filter { it.restocked }.groupBy { it.productId }
+            for ((productId, _) in restockByProduct) {
+                if (db.productDao().getProductById(productId) == null) {
+                    return@withTransaction Result.failure<ReturnEntity>(IllegalStateException("A product selected for restocking no longer exists."))
+                }
+            }
 
-        db.withTransaction {
+            val returnId = "RET-${UUID.randomUUID().toString().take(8).uppercase()}"
+            val returnNumber = "MS-RET-${UUID.randomUUID().toString().take(8).uppercase()}"
+            val returnEntity = ReturnEntity(
+                id = returnId,
+                returnNumber = returnNumber,
+                orderId = order.id,
+                orderNumber = order.orderNumber,
+                customerId = order.customerId,
+                customerName = order.customerName,
+                refundAmountPaise = refundAmountPaise,
+                adjustmentType = adjustmentType,
+                reason = reason.ifBlank { "Customer return / exchange" }
+            )
+
             db.returnDao().insertReturn(returnEntity)
             db.returnDao().insertReturnItems(items.map { it.copy(returnId = returnId) })
 
-            // Update order items returnedQuantity and order returnedTotalPaise
-            for (retItem in items) {
-                val orig = originalItemMap[retItem.orderItemId]!!
-                val updatedReturnedQty = orig.returnedQuantity + retItem.quantity
-                db.orderDao().insertOrderItems(listOf(orig.copy(returnedQuantity = updatedReturnedQty)))
+            for ((orderItemId, requestedItems) in quantitiesByOrderItem) {
+                val original = originalItemMap[orderItemId]!!
+                val quantityReturned = requestedItems.sumOf { it.quantity }
+                db.orderDao().insertOrderItems(
+                    listOf(original.copy(returnedQuantity = original.returnedQuantity + quantityReturned))
+                )
+            }
 
-                // If approved for restock, increment physical inventory!
-                if (retItem.restocked) {
-                    val product = db.productDao().getProductById(retItem.productId)
-                    if (product != null) {
-                        val newPhysical = product.physicalStock + retItem.quantity
-                        db.productDao().updateStock(product.id, newPhysical, product.reservedStock)
-
-                        val movement = StockMovementEntity(
-                            id = "MOV-${UUID.randomUUID().toString().take(8)}",
-                            productId = product.id,
-                            productName = product.name,
-                            timestamp = System.currentTimeMillis(),
-                            movementType = MovementType.RETURN_RESTOCK,
-                            deltaQuantity = retItem.quantity,
-                            physicalBefore = product.physicalStock,
-                            physicalAfter = newPhysical,
-                            reservedBefore = product.reservedStock,
-                            reservedAfter = product.reservedStock,
-                            referenceDoc = returnNumber,
-                            reason = "Restocked from Return $returnNumber: $reason"
-                        )
-                        db.stockMovementDao().insert(movement)
-                    }
-                }
+            for ((productId, returnedItems) in restockByProduct) {
+                val product = db.productDao().getProductById(productId)!!
+                val quantity = returnedItems.sumOf { it.quantity }
+                val newPhysical = product.physicalStock + quantity
+                db.productDao().updateStock(product.id, newPhysical, product.reservedStock)
+                db.stockMovementDao().insert(
+                    StockMovementEntity(
+                        id = "MOV-${UUID.randomUUID().toString().take(8)}",
+                        productId = product.id,
+                        productName = product.name,
+                        timestamp = System.currentTimeMillis(),
+                        movementType = MovementType.RETURN_RESTOCK,
+                        deltaQuantity = quantity,
+                        physicalBefore = product.physicalStock,
+                        physicalAfter = newPhysical,
+                        reservedBefore = product.reservedStock,
+                        reservedAfter = product.reservedStock,
+                        referenceDoc = returnNumber,
+                        reason = "Restocked from return $returnNumber: ${reason.ifBlank { "Customer return / exchange" }}"
+                    )
+                )
             }
 
             db.orderDao().insertOrUpdate(
                 order.copy(returnedTotalPaise = order.returnedTotalPaise + refundAmountPaise)
             )
 
-            // Adjust customer ledger if store credit or debt adjustment
             val customer = db.customerDao().getCustomerById(order.customerId)
             if (customer != null && adjustmentType == ReturnAdjustmentType.STORE_CREDIT) {
-                val newBal = (customer.outstandingBalancePaise - refundAmountPaise).coerceAtLeast(0L)
-                db.customerDao().insertOrUpdate(customer.copy(outstandingBalancePaise = newBal))
+                val newBalance = (customer.outstandingBalancePaise - refundAmountPaise).coerceAtLeast(0L)
+                db.customerDao().insertOrUpdate(customer.copy(outstandingBalancePaise = newBalance))
             }
+            Result.success(returnEntity)
         }
-
-        return Result.success(returnEntity)
     }
-
     // -------------------------------------------------------------
     // Daily Cash Register Closing & Reconciliation
     // -------------------------------------------------------------
