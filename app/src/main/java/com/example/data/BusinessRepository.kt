@@ -846,67 +846,92 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
     }
 
     suspend fun receiveGoods(poId: String, receivedMap: Map<String, Double>): Result<Unit> {
-        val po = db.purchaseDao().getPurchaseOrderById(poId)
-            ?: return Result.failure(Exception("Purchase Order $poId not found"))
+        return db.withTransaction {
+            val po = db.purchaseDao().getPurchaseOrderById(poId)
+                ?: return@withTransaction Result.failure<Unit>(IllegalStateException("Purchase Order $poId not found."))
+            if (po.status != PurchaseStatus.ORDERED && po.status != PurchaseStatus.PARTIAL_RECEIVED) {
+                return@withTransaction Result.failure<Unit>(IllegalStateException("Only ordered or partially received purchase orders can receive goods."))
+            }
+            val items = db.purchaseDao().getItemsForPO(poId)
+            if (items.isEmpty()) return@withTransaction Result.failure<Unit>(IllegalStateException("No items found for this purchase order."))
+            val itemsById = items.associateBy { it.id }
+            if (receivedMap.keys.any { it !in itemsById.keys }) {
+                return@withTransaction Result.failure<Unit>(IllegalArgumentException("The receipt includes an item that does not belong to this purchase order."))
+            }
+            if (receivedMap.values.any { !it.isFinite() || it < 0.0 }) {
+                return@withTransaction Result.failure<Unit>(IllegalArgumentException("Received quantities must be finite, non-negative numbers."))
+            }
+            val positiveReceipts = receivedMap.filterValues { it > 0.0 }
+            if (positiveReceipts.isEmpty()) {
+                return@withTransaction Result.failure<Unit>(IllegalArgumentException("Enter at least one positive received quantity."))
+            }
+            for ((itemId, quantity) in positiveReceipts) {
+                val item = itemsById[itemId]!!
+                val remaining = (item.orderedQuantity - item.receivedQuantity).coerceAtLeast(0.0)
+                if (!item.orderedQuantity.isFinite() || item.orderedQuantity <= 0.0 || quantity > remaining) {
+                    return@withTransaction Result.failure<Unit>(
+                        IllegalArgumentException("Cannot receive $quantity units of '${item.productName}'. Remaining on this purchase order: $remaining.")
+                    )
+                }
+                if (db.productDao().getProductById(item.productId) == null) {
+                    return@withTransaction Result.failure<Unit>(IllegalStateException("Product '${item.productName}' no longer exists."))
+                }
+            }
 
-        val items = db.purchaseDao().getItemsForPO(poId)
-        if (items.isEmpty()) return Result.failure(Exception("No items found for PO"))
-
-        db.withTransaction {
-            var allComplete = true
+            val oldReceivedValuePaise = items.sumOf { (it.unitCostPaise * it.receivedQuantity).toLong() }
+            var addedReceivedValuePaise = 0L
             val updatedItems = items.map { item ->
-                val qtyToReceive = receivedMap[item.id] ?: 0.0
-                if (qtyToReceive > 0.0) {
-                    val newReceived = (item.receivedQuantity + qtyToReceive).coerceAtMost(item.orderedQuantity)
-                    val product = db.productDao().getProductById(item.productId)
-
-                    if (product != null) {
-                        val newPhysical = product.physicalStock + qtyToReceive
-                        db.productDao().updateStock(product.id, newPhysical, product.reservedStock)
-
-                        val movement = StockMovementEntity(
+                val quantity = positiveReceipts[item.id] ?: 0.0
+                if (quantity <= 0.0) {
+                    item
+                } else {
+                    val product = db.productDao().getProductById(item.productId)!!
+                    val newReceivedQuantity = item.receivedQuantity + quantity
+                    val newPhysical = product.physicalStock + quantity
+                    db.productDao().updateStock(product.id, newPhysical, product.reservedStock)
+                    val lineValue = (item.unitCostPaise * quantity).toLong()
+                    addedReceivedValuePaise += lineValue
+                    db.stockMovementDao().insert(
+                        StockMovementEntity(
                             id = "MOV-${UUID.randomUUID().toString().take(8)}",
                             productId = product.id,
                             productName = product.name,
                             timestamp = System.currentTimeMillis(),
                             movementType = MovementType.INWARD_PURCHASE,
-                            deltaQuantity = qtyToReceive,
+                            deltaQuantity = quantity,
                             physicalBefore = product.physicalStock,
                             physicalAfter = newPhysical,
                             reservedBefore = product.reservedStock,
                             reservedAfter = product.reservedStock,
                             referenceDoc = po.poNumber,
-                            reason = "Goods received from ${po.supplierName} under ${po.poNumber}"
+                            reason = "Received ${quantity} units under ${po.poNumber}; value is recorded at tax-exclusive unit cost."
                         )
-                        db.stockMovementDao().insert(movement)
-                    }
-
-                    if (newReceived < item.orderedQuantity) {
-                        allComplete = false
-                    }
-                    item.copy(receivedQuantity = newReceived)
-                } else {
-                    if (item.receivedQuantity < item.orderedQuantity) {
-                        allComplete = false
-                    }
-                    item
+                    )
+                    item.copy(receivedQuantity = newReceivedQuantity)
                 }
             }
-
             db.purchaseDao().insertPurchaseItems(updatedItems)
 
+            val allComplete = updatedItems.all { it.receivedQuantity >= it.orderedQuantity }
             val newStatus = if (allComplete) PurchaseStatus.RECEIVED else PurchaseStatus.PARTIAL_RECEIVED
             db.purchaseDao().insertOrUpdate(po.copy(status = newStatus))
 
-            val supplier = db.supplierDao().getSupplierById(po.supplierId)
-            if (supplier != null) {
-                db.supplierDao().insertOrUpdate(
-                    supplier.copy(outstandingPayablePaise = supplier.outstandingPayablePaise + po.payableBalancePaise)
-                )
+            // Increase supplier payables only by newly received value not already covered by
+            // payments against this PO. Never add the whole PO balance again on each receipt.
+            val newReceivedValuePaise = oldReceivedValuePaise + addedReceivedValuePaise
+            val oldRecognizedPayablePaise = (oldReceivedValuePaise - po.paidPaise).coerceAtLeast(0L)
+            val newRecognizedPayablePaise = (newReceivedValuePaise - po.paidPaise).coerceAtLeast(0L)
+            val payableIncreasePaise = (newRecognizedPayablePaise - oldRecognizedPayablePaise).coerceAtLeast(0L)
+            if (payableIncreasePaise > 0L) {
+                val supplier = db.supplierDao().getSupplierById(po.supplierId)
+                if (supplier != null) {
+                    db.supplierDao().insertOrUpdate(
+                        supplier.copy(outstandingPayablePaise = supplier.outstandingPayablePaise + payableIncreasePaise)
+                    )
+                }
             }
+            Result.success(Unit)
         }
-
-        return Result.success(Unit)
     }
 
     suspend fun recordPurchasePayment(poId: String, amountPaise: Long): Result<Unit> {
