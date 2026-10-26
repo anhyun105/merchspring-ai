@@ -30,11 +30,14 @@ This checklist records work that must be completed before MerchSpring AI is prom
 - [x] Exclude the Room database and shared preferences from Android cloud Auto Backup; the current extraction rules allow device-to-device transfer.
 - [ ] Validate device-transfer behavior on supported Android/OEM versions and communicate it clearly to users.
 - [ ] Build and test a user-controlled, encrypted backup/restore strategy for local business records. Until then, users must export available business data before replacing or resetting a device.
-- [ ] Review Android Auto Backup / device-transfer policy for customer and transaction data.
+- [ ] Review Android Auto Backup / device-transfer policy for customer and transaction data. (Cloud backup is currently excluded; a supported, user-controlled recovery/export workflow is still needed.)
 - [ ] Test recovery from failed transactions, interrupted writes, duplicate submissions, and app upgrades.
 
 ### Business correctness
 
+- [ ] Implement an append-only payment/receipt ledger with amount, method, timestamp, branch, reference, and reversal/correction records. The current models largely store an aggregate paid amount and a single payment-method string per order/purchase; therefore later partial payments cannot be reliably reconciled to their actual date/method for cash closing.
+- [ ] Implement branch-specific inventory balances or a stock ledger per product and branch. Branch and transfer screens currently model branch metadata/transfer events, but the product stock record is global rather than isolated per branch.
+- [ ] Define store-credit and exchange accounting explicitly; the current return workflow updates item quantities and stock, but it is not a complete credit-note, tax adjustment, or store-credit liability system.
 - [ ] Verify sale confirmation, stock reservation, dispatch, purchase receiving, return/restock, payment, refund, transfer, and cash-closing transitions with automated tests.
 - [ ] Reconcile dashboard/report totals against stored records, especially revenue vs cash collected and gross profit vs expenses.
 - [ ] Confirm product-specific HSN/GST configuration and invoice wording with a qualified tax professional; do not advertise GST compliance without validation.
