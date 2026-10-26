@@ -164,71 +164,102 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
         order: OrderEntity,
         items: List<OrderItemEntity>
     ): Result<Unit> {
-        // 1. Stock availability validation
-        for (item in items) {
-            val product = db.productDao().getProductById(item.productId)
-                ?: return Result.failure(Exception("Product ${item.productName} not found"))
-
-            if (product.availableStock < item.quantity) {
-                return Result.failure(
-                    Exception("Insufficient stock for '${product.name}'. Available: ${product.availableStock}, Requested: ${item.quantity}")
-                )
-            }
+        if (items.isEmpty()) return Result.failure(IllegalArgumentException("A sale must contain at least one item."))
+        if (order.totalPaise <= 0L || order.subtotalPaise < 0L || order.discountPaise < 0L || order.taxPaise < 0L) {
+            return Result.failure(IllegalArgumentException("Sale totals are invalid."))
+        }
+        if (order.paidPaise !in 0L..order.totalPaise) {
+            return Result.failure(IllegalArgumentException("The recorded payment must be between zero and the bill total."))
+        }
+        if (items.any { it.orderId != order.id || !it.quantity.isFinite() || it.quantity <= 0.0 || it.unitPricePaise < 0L || it.taxAmountPaise < 0L }) {
+            return Result.failure(IllegalArgumentException("One or more sale items have invalid order IDs, quantities, or amounts."))
         }
 
-        db.withTransaction {
-            // Save order in DISPATCHED status immediately (point of sale counter sale)
-            db.orderDao().insertOrUpdate(
-                order.copy(
-                    status = OrderStatus.DISPATCHED,
-                    dispatchedAt = System.currentTimeMillis(),
-                    paidPaise = order.totalPaise,
-                    paymentStatus = PaymentStatus.PAID
-                )
+        val groupedItems = items.groupBy { it.productId }
+        val resultingOrder = db.withTransaction {
+            if (db.orderDao().getOrderById(order.id) != null) {
+                return@withTransaction Result.failure<Unit>(IllegalStateException("This sale ID already exists. Please retry with a new checkout."))
+            }
+            val productsById = mutableMapOf<String, ProductEntity>()
+            for ((productId, productItems) in groupedItems) {
+                val product = db.productDao().getProductById(productId)
+                    ?: return@withTransaction Result.failure<Unit>(IllegalStateException("Product ${productItems.first().productName} no longer exists."))
+                val requested = productItems.sumOf { it.quantity }
+                if (!requested.isFinite() || requested <= 0.0 || product.availableStock < requested) {
+                    return@withTransaction Result.failure<Unit>(
+                        IllegalStateException("Insufficient current stock for '${product.name}'. Available: ${product.availableStock}, requested: $requested.")
+                    )
+                }
+                productsById[productId] = product
+            }
+
+            val paidStatus = when {
+                order.paidPaise >= order.totalPaise -> PaymentStatus.PAID
+                order.paidPaise > 0L -> PaymentStatus.PARTIAL
+                else -> PaymentStatus.UNPAID
+            }
+            val dispatchedOrder = order.copy(
+                status = OrderStatus.DISPATCHED,
+                dispatchedAt = System.currentTimeMillis(),
+                paymentStatus = paidStatus
             )
+            db.orderDao().insertOrUpdate(dispatchedOrder)
             db.orderDao().insertOrderItems(items)
 
-            // Deduct physical stock & log movement
-            for (item in items) {
-                val product = db.productDao().getProductById(item.productId)!!
-                val newPhysical = (product.physicalStock - item.quantity).coerceAtLeast(0.0)
+            for ((productId, productItems) in groupedItems) {
+                val product = productsById[productId]!!
+                val quantity = productItems.sumOf { it.quantity }
+                val newPhysical = product.physicalStock - quantity
                 db.productDao().updateStock(product.id, newPhysical, product.reservedStock)
                 db.productDao().updateLastSoldTime(product.id, System.currentTimeMillis())
-
-                val movement = StockMovementEntity(
-                    id = "MOV-${UUID.randomUUID().toString().take(8)}",
-                    productId = product.id,
-                    productName = product.name,
-                    timestamp = System.currentTimeMillis(),
-                    movementType = MovementType.OUTWARD_DISPATCH,
-                    deltaQuantity = -item.quantity,
-                    physicalBefore = product.physicalStock,
-                    physicalAfter = newPhysical,
-                    reservedBefore = product.reservedStock,
-                    reservedAfter = product.reservedStock,
-                    referenceDoc = order.orderNumber,
-                    reason = "POS Quick Sale checkout: ${order.orderNumber}"
-                )
-                db.stockMovementDao().insert(movement)
-            }
-
-            // Update customer total purchases
-            val customer = db.customerDao().getCustomerById(order.customerId)
-            if (customer != null) {
-                db.customerDao().insertOrUpdate(
-                    customer.copy(totalPurchasesPaise = customer.totalPurchasesPaise + order.totalPaise)
+                db.stockMovementDao().insert(
+                    StockMovementEntity(
+                        id = "MOV-${UUID.randomUUID().toString().take(8)}",
+                        productId = product.id,
+                        productName = product.name,
+                        timestamp = System.currentTimeMillis(),
+                        movementType = MovementType.OUTWARD_DISPATCH,
+                        deltaQuantity = -quantity,
+                        physicalBefore = product.physicalStock,
+                        physicalAfter = newPhysical,
+                        reservedBefore = product.reservedStock,
+                        reservedAfter = product.reservedStock,
+                        referenceDoc = order.orderNumber,
+                        reason = "POS checkout: ${order.orderNumber}"
+                    )
                 )
             }
+
+            val balanceDue = dispatchedOrder.balanceDuePaise
+            val customer = db.customerDao().getCustomerById(dispatchedOrder.customerId)
+            when {
+                customer != null -> db.customerDao().insertOrUpdate(
+                    customer.copy(
+                        totalPurchasesPaise = customer.totalPurchasesPaise + dispatchedOrder.totalPaise,
+                        outstandingBalancePaise = customer.outstandingBalancePaise + balanceDue
+                    )
+                )
+                dispatchedOrder.customerId != "CUS-WALKIN" -> db.customerDao().insertOrUpdate(
+                    CustomerEntity(
+                        id = dispatchedOrder.customerId,
+                        name = dispatchedOrder.customerName,
+                        phone = dispatchedOrder.customerPhone,
+                        city = "",
+                        state = "",
+                        totalPurchasesPaise = dispatchedOrder.totalPaise,
+                        outstandingBalancePaise = balanceDue
+                    )
+                )
+            }
+            Result.success(Unit)
         }
 
-        // Post checkout low stock alerts
-        for (item in items) {
-            db.productDao().getProductById(item.productId)?.let { checkAndTriggerLowStockAlert(it) }
+        if (resultingOrder.isFailure) return resultingOrder
+        for (productId in groupedItems.keys) {
+            db.productDao().getProductById(productId)?.let { checkAndTriggerLowStockAlert(it) }
         }
-
         return Result.success(Unit)
     }
-
     // -------------------------------------------------------------
     // Returns & Exchanges Workflow (Prevents Double Return / Over Return)
     // -------------------------------------------------------------
