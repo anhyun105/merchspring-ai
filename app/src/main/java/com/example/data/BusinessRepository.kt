@@ -157,6 +157,41 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
         return Result.success(Unit)
     }
 
+    suspend fun addStock(productId: String, quantity: Double, reason: String): Result<Double> {
+        if (!quantity.isFinite() || quantity <= 0.0) {
+            return Result.failure(IllegalArgumentException("Stock addition must be a positive finite quantity."))
+        }
+        val result = db.withTransaction {
+            val product = db.productDao().getProductById(productId)
+                ?: return@withTransaction Result.failure<Double>(IllegalStateException("Product not found."))
+            val newPhysical = product.physicalStock + quantity
+            if (!newPhysical.isFinite() || newPhysical < product.reservedStock) {
+                return@withTransaction Result.failure<Double>(IllegalStateException("Stock quantity would violate the current reservation."))
+            }
+            db.productDao().updateStock(product.id, newPhysical, product.reservedStock)
+            db.stockMovementDao().insert(
+                StockMovementEntity(
+                    id = "MOV-${UUID.randomUUID().toString().take(8)}",
+                    productId = product.id,
+                    productName = product.name,
+                    timestamp = System.currentTimeMillis(),
+                    movementType = MovementType.ADJUSTMENT_CORRECTION,
+                    deltaQuantity = quantity,
+                    physicalBefore = product.physicalStock,
+                    physicalAfter = newPhysical,
+                    reservedBefore = product.reservedStock,
+                    reservedAfter = product.reservedStock,
+                    referenceDoc = "AI-STOCK-${UUID.randomUUID().toString().take(6).uppercase()}",
+                    reason = reason.ifBlank { "AI-assisted stock addition confirmed by user" }
+                )
+            )
+            Result.success(newPhysical)
+        }
+        if (result.isSuccess) {
+            db.productDao().getProductById(productId)?.let { checkAndTriggerLowStockAlert(it) }
+        }
+        return result
+    }
     // -------------------------------------------------------------
     // POS Quick Billing Checkout
     // -------------------------------------------------------------
