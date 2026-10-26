@@ -193,12 +193,12 @@ fun ReorderAndTransfersScreen(viewModel: MainViewModel) {
                                 }
 
                                 Surface(
-                                    color = if (rec.daysOfCoverRemaining <= 3) StatusCoralContainer else BrandTealContainer,
+                                    color = if (rec.daysOfCoverRemaining.isFinite() && rec.daysOfCoverRemaining <= 3) StatusCoralContainer else BrandTealContainer,
                                     shape = RoundedCornerShape(6.dp)
                                 ) {
                                     Text(
-                                        text = "${String.format(java.util.Locale.US, "%.1f", rec.daysOfCoverRemaining)} Days of Cover Left",
-                                        color = if (rec.daysOfCoverRemaining <= 3) StatusCoral else BrandTealLight,
+                                        text = if (rec.daysOfCoverRemaining.isFinite()) "${String.format(java.util.Locale.US, "%.1f", rec.daysOfCoverRemaining)} Days of Cover Left" else "No Recent Sales Data",
+                                        color = if (rec.daysOfCoverRemaining.isFinite() && rec.daysOfCoverRemaining <= 3) StatusCoral else BrandTealLight,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 11.sp,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -217,7 +217,7 @@ fun ReorderAndTransfersScreen(viewModel: MainViewModel) {
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text("Sales Velocity", fontSize = 10.sp, color = LightSlate)
-                                    Text("${rec.dailySalesVelocity}/day", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text(if (rec.dailySalesVelocity > 0.0) "${String.format(java.util.Locale.US, "%.2f", rec.dailySalesVelocity)}/day" else "No sales velocity", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                 }
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text("Recommended Order", fontSize = 10.sp, color = LightSlate)
