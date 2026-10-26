@@ -27,7 +27,9 @@ This checklist records work that must be completed before MerchSpring AI is prom
 ### Data protection and resilience
 
 - [ ] Add explicit Room schema export and versioned migrations before changing the database schema in a released app. Do not re-enable destructive migration as a shortcut.
-- [ ] Define a reliable backup, restore, export, and device-replacement strategy for local business records.
+- [x] Exclude the Room database and shared preferences from Android cloud Auto Backup; the current extraction rules allow device-to-device transfer.
+- [ ] Validate device-transfer behavior on supported Android/OEM versions and communicate it clearly to users.
+- [ ] Build and test a user-controlled, encrypted backup/restore strategy for local business records. Until then, users must export available business data before replacing or resetting a device.
 - [ ] Review Android Auto Backup / device-transfer policy for customer and transaction data.
 - [ ] Test recovery from failed transactions, interrupted writes, duplicate submissions, and app upgrades.
 
