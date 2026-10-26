@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" role="img" aria-labelledby="title desc">
+  <title id="title">MerchSpring AI</title>
+  <desc id="desc">A retail operations platform for inventory, sales, purchasing, and AI-assisted insights.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101D35"/>
+      <stop offset="1" stop-color="#183C50"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#68E0D0"/>
+      <stop offset="1" stop-color="#31B7A8"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="300" rx="30" fill="url(#bg)"/>
+  <circle cx="1060" cy="34" r="180" fill="#2CB9A8" opacity=".10"/>
+  <circle cx="1160" cy="270" r="130" fill="#68E0D0" opacity=".09"/>
+  <g transform="translate(70 60)">
+    <rect x="0" y="0" width="180" height="180" rx="38" fill="url(#accent)"/>
+    <path d="M37 75 C37 44 71 35 93 56 C116 35 150 44 150 75 C150 103 121 124 93 147 C65 124 37 103 37 75Z" fill="#10263B" opacity=".97"/>
+    <path d="M58 92 L81 110 L126 65" fill="none" stroke="#DFFFF8" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g fill="#F5FBFF" font-family="Inter,Segoe UI,Arial,sans-serif">
+    <text x="295" y="130" font-size="54" font-weight="750" letter-spacing="-1">MerchSpring AI</text>
+    <text x="299" y="180" font-size="24" fill="#83E9DC" font-weight="600">Your Business, in Sync.</text>
+    <text x="299" y="224" font-size="19" fill="#D6E4EC">Inventory  ·  Sales  ·  Purchasing  ·  Business insights</text>
+  </g>
+  <g fill="#63D8C9" opacity=".9">
+    <circle cx="1025" cy="106" r="5"/><circle cx="1065" cy="146" r="5"/><circle cx="1105" cy="106" r="5"/>
+    <path d="M1025 106 L1065 146 L1105 106" stroke="#63D8C9" stroke-width="2" fill="none"/>
+  </g>
+</svg>

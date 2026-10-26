@@ -1,0 +1,59 @@
+name: Bug report
+description: Report a reproducible problem in MerchSpring AI
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: "Use fictitious records only. Remove credentials, personal data, customer details, and financial information from screenshots/logs."
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the issue clearly.
+      placeholder: A concise summary of the problem
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include navigation/actions and safe sample values.
+      placeholder: |
+        1. Open ...
+        2. Create a fictitious ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: App build / Actions run URL
+      placeholder: Android CI run URL or app version
+    validations:
+      required: false
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version
+      placeholder: Device model, Android version, API level
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitised logs or screenshots
+      description: Remove personal data, secrets, account details, and all customer/financial records.
+    validations:
+      required: false

@@ -55,13 +55,13 @@ This checklist records work that must be completed before MerchSpring AI is prom
 
 ### Release engineering
 
-- [ ] Add the official Gradle Wrapper scripts and wrapper JAR, and validate the wrapper distribution.
+- [x] Add the official Gradle Wrapper scripts and wrapper JAR; pin the Gradle distribution SHA-256 checksum.
 - [ ] Use a protected release-signing key managed outside the repository and CI logs.
 - [ ] Choose and add an open-source/commercial license, or keep the repository's licensing terms explicit.
 - [ ] Enable GitHub secret scanning / push protection, Dependabot alerts, and code scanning where available.
 - [ ] Review dependency updates and fix all high-severity issues.
 - [ ] Run accessibility, responsiveness, performance, and usability checks on representative low- and mid-range Android devices.
-- [ ] Verify CI passes and manually test a release candidate before distribution.
+- [ ] Verify the latest CI run passes and manually test a release candidate before distribution.
 
 ## Current architecture boundary
 

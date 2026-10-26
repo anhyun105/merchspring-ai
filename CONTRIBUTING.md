@@ -1,46 +1,48 @@
 # Contributing to MerchSpring AI
 
-Thank you for helping improve MerchSpring AI. The project is an Android Kotlin/Jetpack Compose prototype; prioritize correctness, clarity, data protection, and tested business workflows over adding placeholder screens.
+Thank you for helping improve MerchSpring AI. This is an Android Kotlin/Jetpack Compose prototype. Prioritise correctness, clear UX, data protection, and tested business workflows over placeholder features.
 
 ## Before making changes
 
-1. Check existing screens, models, repository methods, and Room entities before adding a duplicate implementation.
-2. Open an issue or describe the proposed change in a pull request when it affects business rules, database schema, security, billing, stock movement, or AI-triggered actions.
-3. Keep UI, data access, and business logic separated.
-4. Never commit credentials, signing keys, App Check debug tokens, customer data, or real invoices.
-5. Do not change the application ID or package namespace without documenting the migration and Firebase/Play Store implications.
+1. Review existing screens, models, repository methods, and Room entities before introducing a duplicate.
+2. Open an issue or describe the proposal in a pull request if it affects business rules, the database schema, security, billing, stock movement, or AI-triggered actions.
+3. Keep UI, state handling, persistence, and business rules separated.
+4. Never commit credentials, signing keys, App Check debug tokens, real customer data, or real invoices.
+5. Do not change the Android application ID or Kotlin namespace without documenting Firebase, migration, and Play distribution implications.
 
 ## Local environment
 
-Use JDK 17, Gradle 9.3.1, Android SDK Platform 36.1, and Build Tools 36.0.0. The repository currently does not include the Gradle Wrapper, so install the matching Gradle distribution locally.
+- JDK 21
+- Android SDK Platform 36.1
+- Android Build Tools 36.0.0
+- Android Studio compatible with Android Gradle Plugin 9.1.1
 
-Build and test:
+The Gradle Wrapper pins Gradle 9.3.1. Build and run JVM/Robolectric tests from the repository root:
 
 ```bash
-gradle :app:assembleDebug --no-daemon
-gradle :app:testDebugUnitTest --no-daemon
+./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon
 ```
 
-Firebase configuration is optional for source compilation but required to test Firebase AI Logic and App Check. Configure the Android app in Firebase and add `app/google-services.json` locally; that file is ignored by Git.
+If the root-level `debug.keystore` does not exist, create a development-only key. Never use a production signing key for local/debug builds. Configure Firebase separately if you need to test Firebase AI Logic and App Check. Put `google-services.json` in `app/google-services.json`; the file is git-ignored.
 
 ## Code and data principles
 
-- Store money in integer paise and use the existing currency-formatting helpers.
-- Treat unknown, ambiguous, or missing quantities as validation errors; never invent values.
-- Do not choose the first product/order as a fallback when the user request is ambiguous.
-- Do not update physical stock when merely creating a purchase order.
-- Use explicit transaction states and preserve audit history for stock, payments, returns, and corrections.
-- Do not silently delete user records during database migrations.
-- Keep AI responses grounded in actual records and distinguish suggestions from saved actions.
-- Any consequential AI-proposed action must show its details and require explicit confirmation.
+- Store money as integer paise and use existing currency-formatting helpers.
+- Reject missing/ambiguous quantities, amounts, product references, and order references instead of guessing.
+- Do not silently adjust stock quantities, receive more than was ordered, or change a financial state without validation.
+- Use explicit state transitions and preserve an audit trail for consequential inventory operations.
+- Do not silently delete business records during schema migrations.
+- Keep AI outputs grounded in workspace facts and distinguish proposals from completed operations.
+- Consequential AI-proposed operations must show details and require in-app confirmation.
 - When using Google Search grounding, show Google's required search entry point and visible source attribution.
-- Do not claim that sample invoice data has been extracted from a real uploaded document.
-- Add tests for business-rule changes and keep empty/error/loading states useful.
+- Never describe a demo invoice fixture as data extracted from a real document.
+- Add automated tests for business-rule changes and preserve useful loading, empty, and error states.
 
 ## Pull requests
 
-- Use a focused branch and a descriptive commit message.
-- Explain the problem, the behavior changed, and any user-facing or database implications.
-- Include test/build results. If a test could not be run, say so explicitly.
-- Keep screenshots or short screen recordings for meaningful UI changes when practical.
-- Do not mix formatting-only changes with business-rule changes unless necessary.
+- Use a focused branch and descriptive commit messages.
+- Describe the problem, behavior change, and user-facing, data, or schema implications.
+- Include screenshots for meaningful UI changes when practical.
+- State exactly which build and tests were run. If a test could not be run, say so; do not report it as passing.
+- Check the production-readiness checklist when touching financial, tax, multi-branch, or release behavior.
+- Ensure no credentials or real business/customer data are included in the diff.

@@ -1,105 +1,168 @@
-# MerchSpring AI
+<p align="center">
+  <img src="docs/assets/merchspring-banner.svg" width="100%" alt="MerchSpring AI — Your Business, in Sync">
+</p>
 
-**Your Business, in Sync.**
+<p align="center">
+  <a href="https://github.com/anhyun105/merchspring-ai/actions/workflows/android-ci.yml"><img src="https://github.com/anhyun105/merchspring-ai/actions/workflows/android-ci.yml/badge.svg?branch=main" alt="Android CI status"></a>
+  <img src="https://img.shields.io/badge/platform-Android-3DDC84?logo=android&logoColor=white" alt="Android">
+  <img src="https://img.shields.io/badge/language-Kotlin-7F52FF?logo=kotlin&logoColor=white" alt="Kotlin">
+  <img src="https://img.shields.io/badge/min%20SDK-24-blue" alt="Minimum SDK 24">
+  <img src="https://img.shields.io/badge/status-prototype-orange" alt="Prototype status">
+</p>
 
-MerchSpring AI is an Android business-management app prototype for retailers, small shops, wholesalers, and growing businesses. It brings common day-to-day workflows—product catalogue, stock movements, point-of-sale billing, sales orders, purchases, customers and suppliers, expenses, invoices, reports, notifications, and a 3D warehouse view—into one Android interface.
+<p align="center">
+  <a href="https://github.com/anhyun105/merchspring-ai/actions/workflows/android-ci.yml">Builds & test APK</a> ·
+  <a href="docs/TESTING.md">Tester guide</a> ·
+  <a href="docs/PRODUCTION_READINESS.md">Readiness checklist</a> ·
+  <a href="SECURITY.md">Security policy</a>
+</p>
 
-> **Project status: prototype / active development.** Source code for multiple modules exists, but that does not mean every workflow has been fully tested or is ready for production. See [Production readiness](docs/PRODUCTION_READINESS.md) for known gaps and launch requirements.
+> [!IMPORTANT]
+> **MerchSpring AI is an early-stage prototype, not a production accounting or tax system.** Do not use it as the source of truth for real customer balances, tax filings, payment reconciliation, or multi-branch stock. Review the [production-readiness checklist](docs/PRODUCTION_READINESS.md).
 
-## What it is built with
+## What is MerchSpring AI?
 
-- **Kotlin** and **Jetpack Compose** for the native Android UI.
-- **Room** for on-device persistence of business records.
-- **Kotlin coroutines and Flow** for asynchronous work and reactive state.
-- **Firebase AI Logic** for Gemini-powered assistance through Firebase's proxy.
-- **Firebase App Check** with a debug provider for local development and Play Integrity for release builds.
-- **Gradle version catalog** for central dependency management.
+MerchSpring AI is a native Android business-management prototype for small retailers, shops, wholesalers, and growing businesses. It brings everyday inventory and operations workflows into one interface, with an optional AI assistant for business questions and carefully validated action proposals.
 
-The current app is a **native Android application**, not a React web app. Business records are stored locally in Room. Firebase Authentication, cloud Firestore business-data sync, multi-user login, and cross-device synchronisation are not currently implemented.
+## What you can explore
 
-## Current feature areas
+| Area | Included in the prototype |
+| --- | --- |
+| **Products & inventory** | Product catalogue, stock adjustments, stock movements, reorder recommendations, and transfer concepts |
+| **Sales & POS** | Quick billing, sales orders, dispatch, customer records, and return workflow |
+| **Purchasing** | Purchase orders, supplier records, goods receiving, and purchase-payment tracking |
+| **Operations** | Expenses, cash-closing workflow, notifications, reports, and business metrics |
+| **AI assistant** | Contextual business Q&A, confirmed action proposals, and optional Google Search grounding with source attribution |
+| **Invoice preview** | Draft preview using configured business/product details; not a verified GST invoice |
+| **Workspace** | Local settings, branch concepts, and an explicit option to load fictitious demo data |
 
-- Product catalogue and stock movement tracking.
-- Quick POS billing and sales/order workflows.
-- Purchase orders and receiving workflows.
-- Customer and supplier records.
-- Expense tracking and daily cash closing.
-- Invoice and tax-related fields.
-- Sales, stock, and business-report screens.
-- AI business assistant with optional thinking and Google Search grounding.
-- A 3D warehouse view, notifications, branch/transfer concepts, and workspace settings.
-- Explicit demo-data controls in Settings.
+The list describes workflows available to explore in the source; it does **not** mean every workflow is production-validated.
 
-**Demo data:** A fresh installation should start with a clean workspace. Sample Indian-store records can be loaded from the explicit **Reload Demo Data** option in Settings. Demo records are fictitious examples; do not use them for real invoices, tax filings, payment reconciliation, or business decisions.
+## Technology and architecture
 
-## Requirements
+- **Kotlin + Jetpack Compose** — native Android UI
+- **ViewModel, Coroutines and Flow** — UI state and asynchronous work
+- **Room** — on-device business-record persistence
+- **Firebase AI Logic** — optional Gemini integration through Firebase
+- **Firebase App Check** — debug provider for development and Play Integrity provider for release builds
+- **Gradle Kotlin DSL + Gradle Wrapper** — repeatable build setup
 
-The current Gradle configuration targets:
-
-- JDK 17.
-- Gradle 9.3.1.
-- Android SDK Platform 36.1.
-- Android Build Tools 36.0.0.
-- An Android Studio version that supports the project's Android Gradle Plugin 9.1.1.
-
-The repository currently does not include the Gradle Wrapper scripts and wrapper JAR. The CI workflow therefore installs Gradle 9.3.1 directly. Before external release, adding and validating the official Gradle Wrapper is recommended.
-
-## Build and test
-
-Install JDK 17, Android SDK Platform 36.1 and Build Tools 36.0.0. Install Gradle 9.3.1, then run from the repository root:
-
-```bash
-gradle --version
-gradle :app:assembleDebug --no-daemon
-gradle :app:testDebugUnitTest --no-daemon
+```mermaid
+flowchart LR
+  UI["Compose screens"] --> VM["ViewModel / StateFlow"]
+  VM --> REPO["BusinessRepository"]
+  REPO --> DB[("Room database<br/>on this device")]
+  VM -. "AI requests" .-> FAI["Firebase AI Logic"]
+  FAI --> GEM["Gemini model"]
 ```
 
-For a debug build, the project uses a root-level `debug.keystore`. If you need a local key, create a development-only key (never reuse a production signing key):
+**Data boundary:** core business records remain in a local Room database. Firebase AI Logic handles AI requests; it does not add authentication, cloud storage for business records, or cross-device sync.
+
+## Get a test build
+
+The easiest option is to download the debug APK produced by a **successful** GitHub Actions run.
+
+1. Open [Android CI on GitHub Actions](https://github.com/anhyun105/merchspring-ai/actions/workflows/android-ci.yml).
+2. Open the latest run with a green check mark.
+3. Under **Artifacts**, download `merchspring-ai-debug-apk`.
+4. Transfer `app-debug.apk` to an Android device running Android 7.0 / API 24 or newer and install it. Android may ask you to allow installation from the app used to open the APK.
+5. CI uses a temporary debug signing key. If Android reports a signing-certificate conflict when replacing an older test APK, uninstall the previous test build and install the new one.
+
+The workflow uploads the APK only if assembly **and** unit tests succeed. Test reports are uploaded separately when available. CI artifacts are temporary test outputs, not a production release.
+
+## Build locally
+
+### Requirements
+
+- JDK **21** (Robolectric tests run against Android API 36)
+- Android SDK Platform **36.1**
+- Android Build Tools **36.0.0**
+- Android Studio compatible with Android Gradle Plugin **9.1.1**
+- Internet access for the initial Gradle/dependency download
+
+The included Gradle Wrapper pins Gradle **9.3.1** and verifies its distribution checksum. You do not need a global Gradle installation.
+
+### Build and run tests
 
 ```bash
-keytool -genkeypair -v \
-  -keystore debug.keystore \
-  -storepass android \
-  -keypass android \
-  -alias androiddebugkey \
-  -dname "CN=Android Debug,O=Android,C=US" \
-  -keyalg RSA -keysize 2048 -validity 10000
+git clone https://github.com/anhyun105/merchspring-ai.git
+cd merchspring-ai
+
+# Create a development-only signing key if one is not already present.
+if [ ! -f debug.keystore ]; then
+  keytool -genkeypair -v \
+    -keystore debug.keystore \
+    -storepass android \
+    -keypass android \
+    -alias androiddebugkey \
+    -dname "CN=Android Debug,O=MerchSpring AI,C=US" \
+    -keyalg RSA -keysize 2048 -validity 10000
+fi
+
+./gradlew --version
+./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon
 ```
 
-The Gradle task may compile without Firebase configuration, but the AI service will not work until Firebase is configured.
+The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`. Install it on a connected device with Android Debug Bridge:
 
-## Configure Gemini safely
+```bash
+adb devices
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
 
-Do **not** embed a Gemini Developer API key in the Android APK. A key compiled into an application can be extracted from the package. MerchSpring AI uses Firebase AI Logic so model requests go through Firebase's proxy instead of the app containing a raw Gemini API key.
+Open the project in Android Studio for code navigation and UI development. Set the Gradle JDK to JDK 21 and install the SDK versions listed above.
 
-1. Create or select a Firebase project.
-2. Register the Android application using the current application ID: `com.aistudio.merchspring.kvpnwx`.
-3. Enable Firebase AI Logic and select the Gemini Developer API provider.
-4. Add the downloaded `google-services.json` to `app/google-services.json` locally. This path is git-ignored.
-5. Configure Firebase App Check. Debug builds use the App Check debug provider; register the generated debug token in Firebase Console. Release builds use Play Integrity.
-6. In Firebase Console, verify App Check enforcement and configure monitoring, quotas, and billing alerts before distributing builds.
-7. Run the app and verify the AI assistant, including source attribution when Google Search grounding is enabled.
+## Configure Firebase AI (optional)
 
-Never commit a Firebase service-account private key, an App Check debug token, or a production signing key. Do not place a Gemini Developer API key in `.env`, Gradle properties, or source code.
+Core local workflows can be compiled without Firebase project configuration, but **the AI assistant needs a correctly configured Firebase project**.
 
-## Data, privacy, and limitations
+1. Register the Android app in Firebase using the current application ID: `com.aistudio.merchspring.kvpnwx`.
+2. Enable Firebase AI Logic and configure a Gemini provider/model supported by your project.
+3. Place the downloaded `google-services.json` at `app/google-services.json`. This path is intentionally ignored by Git.
+4. For debug builds, register the App Check debug token in Firebase Console. For release builds, verify Play Integrity and enforce App Check only after checking the project configuration.
+5. Configure quotas and billing alerts, then verify AI behavior and Google Search source attribution in the actual app.
 
-- Core business records are currently stored **on the device** using Room. They are not automatically synced to a cloud workspace.
-- Android cloud Auto Backup excludes the Room database and shared preferences so customer/financial records are not silently copied into general cloud backups. Device-to-device transfer is allowed by the Android extraction rules; behavior must be tested on supported devices. There is no encrypted cloud backup/restore service yet, so export available business data before replacing or resetting a device.
-- Using the AI assistant sends the user's prompt, recent chat history, and a business-summary snapshot to Firebase AI Logic / the selected Gemini service. Customer names and balances are included only when a prompt asks about customer dues, debts, or payment reminders; aggregate receivables remain part of the summary. The app displays this data-sharing notice in the AI screen. Review service terms, retention settings, and your business privacy notice before using sensitive data.
-- The Settings screen includes a role-switch/testing experience. It is not a substitute for authentication or server-enforced permissions.
-- Payment tracking currently stores aggregate paid amounts and a single payment-method value per order/purchase, not an append-only payment ledger. Payments made on a later day or using multiple methods cannot be reliably reconciled by transaction date/method.
-- Branch/transfer screens are prototype workflows, not isolated per-branch inventory accounting: products still have a global stock record. Do not use them as the sole source of truth for multiple physical locations.
-- The invoice-extraction sample is currently a deterministic demo fixture, not a production document OCR pipeline.
-- Tax fields and invoice screens do not by themselves establish GST compliance, GST portal connectivity, or e-invoice filing.
-- Automatic Room database wiping on schema migration has been removed. Explicit database migrations must be added before changing the Room schema in a release.
+Never commit service-account credentials, App Check debug tokens, production signing keys, private customer data, or a Gemini API key. See [SECURITY.md](SECURITY.md).
 
-See [SECURITY.md](SECURITY.md) for vulnerability reporting and [CONTRIBUTING.md](CONTRIBUTING.md) for development guidance.
+## First-run demo
+
+A fresh installation should open with a clean workspace. To explore fictitious records, use **Settings → Reload Demo Data**. Read the confirmation carefully: loading demo data replaces the current workspace records. Do not enter live customer or financial data into a test installation.
+
+Follow the [manual tester guide](docs/TESTING.md) for a repeatable smoke test. Report defects with reproducible steps and sanitised screenshots/logs; never attach actual customer data or credentials.
+
+## Known limitations
+
+- **Local-only records:** no Firebase Authentication, cloud Firestore business-data sync, multi-user login, or cross-device synchronisation.
+- **Payment tracking:** records mostly store aggregate paid amounts and a single payment method rather than a dated, append-only receipt ledger.
+- **Multiple branches:** branch/transfer flows are prototypes; product stock is global rather than separately accounted for per branch.
+- **Returns and exchanges:** replacement-item issuance, complete store-credit accounting, and tax/credit-note treatment are not complete.
+- **Invoices and tax:** invoice output is a draft preview. GST compliance, sequential invoice numbering, portal filing, and tax treatment have not been certified.
+- **Invoice extraction:** the current extraction screen is a demo fixture, not real OCR.
+- **Recovery and upgrades:** encrypted backup/restore and release-grade Room migration strategy still need work.
+
+Review [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) before treating any workflow as business-critical.
+
+## Repository map
+
+| Path | Purpose |
+| --- | --- |
+| `app/src/main` | Android application source and resources |
+| `app/src/test` | JVM unit and Robolectric tests |
+| `app/src/androidTest` | Instrumentation tests for a device/emulator |
+| `.github/workflows/android-ci.yml` | Build, tests, reports, and test APK artifact |
+| `docs/TESTING.md` | Manual tester smoke-test checklist |
+| `docs/PRODUCTION_READINESS.md` | Known gaps and release checklist |
+| `CONTRIBUTING.md` | Development and contribution guidance |
+| `SECURITY.md` | Security policy |
+
+## Contributing
+
+Bug reports, reproducible test cases, and focused pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), use the issue templates, and include actual build/test results.
 
 ## License
 
-A project license has not yet been selected. Until the repository owner adds a license, do not assume that the source is available for unrestricted copying, redistribution, or commercial use.
+No project license has been selected yet. Until the repository owner adds a license, assume standard copyright applies; do not treat the source as available for unrestricted redistribution or commercial use.
 
 ---
 
-**MerchSpring AI — Your Business, in Sync.**
+<p align="center"><strong>MerchSpring AI</strong> · Your Business, in Sync.</p>
