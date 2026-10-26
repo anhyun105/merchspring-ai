@@ -345,6 +345,20 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
                 }
             }
 
+            val maximumRefundForSelectedItems = items.sumOf { returnedItem ->
+                val original = originalItemMap[returnedItem.orderItemId]!!
+                if (original.quantity > 0.0) {
+                    Math.round(original.totalPaise.toDouble() * returnedItem.quantity / original.quantity).coerceAtLeast(0L)
+                } else 0L
+            }
+            if (refundAmountPaise > maximumRefundForSelectedItems) {
+                return@withTransaction Result.failure<ReturnEntity>(
+                    IllegalArgumentException(
+                        "Refund exceeds the selected items' remaining value of ${maximumRefundForSelectedItems.toRupeesString()}."
+                    )
+                )
+            }
+
             val restockByProduct = items.filter { it.restocked }.groupBy { it.productId }
             for ((productId, _) in restockByProduct) {
                 if (db.productDao().getProductById(productId) == null) {
