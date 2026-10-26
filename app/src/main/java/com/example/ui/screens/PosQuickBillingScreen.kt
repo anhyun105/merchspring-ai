@@ -853,7 +853,7 @@ fun ReturnsProcessingDialog(
                         FilterChip(
                             selected = adjustmentType == option.first,
                             onClick = { adjustmentType = option.first },
-                            label = { Text(option.second, fontSize = 11.sp) },
+                            label = { Text(if (option.first == ReturnAdjustmentType.EXCHANGE) "Exchange*" else option.second, fontSize = 11.sp) },
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = BrandTeal,
                                 selectedLabelColor = MidnightNavy
@@ -861,6 +861,11 @@ fun ReturnsProcessingDialog(
                         )
                     }
                 }
+                Text(
+                    text = "* Exchange currently records the return only; a replacement item is not issued by this prototype.",
+                    fontSize = 10.sp,
+                    color = StatusAmber
+                )
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
