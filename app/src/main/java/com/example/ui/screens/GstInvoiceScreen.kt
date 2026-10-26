@@ -62,7 +62,7 @@ fun GstInvoiceScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Tax Invoice Generator",
+                text = "Invoice Preview (Draft)",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
@@ -118,24 +118,24 @@ fun GstInvoiceScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = settings?.businessName ?: "MerchSpring Retail",
+                                    text = settings?.businessName?.takeIf { it.isNotBlank() } ?: "Business name not configured",
                                     fontSize = 18.sp,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = MidnightNavy
                                 )
                                 Text(
-                                    text = settings?.address ?: "Indiranagar, Bengaluru, Karnataka",
+                                    text = settings?.address?.takeIf { it.isNotBlank() } ?: "Business address not configured",
                                     fontSize = 11.sp,
                                     color = DarkSlate
                                 )
                                 Text(
-                                    text = "GSTIN: ${settings?.gstin ?: "29AAAAA0000A1Z5"} | PAN: ${settings?.pan ?: "AAAAA0000A"}",
+                                    text = "GSTIN: ${settings?.gstin?.takeIf { it.isNotBlank() } ?: "Not configured"} | PAN: ${settings?.pan?.takeIf { it.isNotBlank() } ?: "Not configured"}",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = BrandTealDark
                                 )
                                 Text(
-                                    text = "Phone: ${settings?.phone ?: "+91 98200 12345"}",
+                                    text = "Phone: ${settings?.phone?.takeIf { it.isNotBlank() } ?: "Not configured"}",
                                     fontSize = 11.sp,
                                     color = DarkSlate
                                 )
@@ -146,7 +146,7 @@ fun GstInvoiceScreen(
                                 shape = RoundedCornerShape(8.dp)
                             ) {
                                 Text(
-                                    text = "TAX INVOICE",
+                                    text = "DRAFT PREVIEW",
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
@@ -178,7 +178,7 @@ fun GstInvoiceScreen(
                                     color = MidnightNavy
                                 )
                                 Text("Place of Supply:", fontSize = 11.sp, color = MutedSlate)
-                                Text("Karnataka (Code 29)", fontSize = 12.sp, color = MidnightNavy)
+                                Text("Not configured", fontSize = 12.sp, color = MidnightNavy)
                             }
                         }
                     }
@@ -193,7 +193,7 @@ fun GstInvoiceScreen(
                             Column(modifier = Modifier.padding(10.dp)) {
                                 Text("BILL TO:", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MutedSlate)
                                 Text(order.customerName, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MidnightNavy)
-                                Text("Contact: ${order.customerPhone}", fontSize = 11.sp, color = DarkSlate)
+                                Text("Contact: ${order.customerPhone.ifBlank { "Not provided" }}", fontSize = 11.sp, color = DarkSlate)
                             }
                         }
                     }
@@ -249,7 +249,7 @@ fun GstInvoiceScreen(
                             verticalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("Subtotal (Taxable):", fontSize = 11.sp, color = DarkSlate)
+                                Text("Item Subtotal:", fontSize = 11.sp, color = DarkSlate)
                                 Text(order.subtotalPaise.toRupeesString(), fontSize = 11.sp, color = MidnightNavy)
                             }
                             if (order.discountPaise > 0) {
@@ -259,12 +259,8 @@ fun GstInvoiceScreen(
                                 }
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("CGST (Half Tax):", fontSize = 11.sp, color = DarkSlate)
-                                Text((order.taxPaise / 2).toRupeesString(), fontSize = 11.sp, color = MidnightNavy)
-                            }
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("SGST (Half Tax):", fontSize = 11.sp, color = DarkSlate)
-                                Text((order.taxPaise / 2).toRupeesString(), fontSize = 11.sp, color = MidnightNavy)
+                                Text("Tax (configured product rates):", fontSize = 11.sp, color = DarkSlate)
+                                Text(order.taxPaise.toRupeesString(), fontSize = 11.sp, color = MidnightNavy)
                             }
                             HorizontalDivider(color = MidnightNavy, thickness = 1.dp)
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -284,7 +280,7 @@ fun GstInvoiceScreen(
                             verticalAlignment = Alignment.Bottom
                         ) {
                             Column {
-                                Text("Terms: Subject to Bengaluru jurisdiction.", fontSize = 9.sp, color = MutedSlate)
+                                Text("Draft only — verify tax, place of supply, and terms.", fontSize = 9.sp, color = MutedSlate)
                                 Text("Thank you for your business!", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = BrandTealDark)
                             }
 
@@ -296,11 +292,11 @@ fun GstInvoiceScreen(
                                     color = BrandTeal.copy(alpha = 0.05f)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
-                                        Text("VERIFIED\nSTAMP", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = BrandTeal)
+                                        Text("DRAFT\nNOT VERIFIED", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = BrandTeal)
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Text("For ${settings?.businessName}", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = MidnightNavy)
+                                Text("For ${settings?.businessName?.takeIf { it.isNotBlank() } ?: "Business"}", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = MidnightNavy)
                                 Text("Authorized Signatory", fontSize = 9.sp, color = MutedSlate)
                             }
                         }
