@@ -3,6 +3,8 @@ package com.example.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -560,17 +562,18 @@ fun PosQuickBillingScreen(viewModel: MainViewModel) {
     // Returns & Exchange Dialog
     if (showReturnDialog) {
         ReturnsProcessingDialog(
+            viewModel = viewModel,
             orders = orders,
             onDismiss = { showReturnDialog = false },
-            onConfirmReturn = { orderId, refundPaise, adjType, reason, returnItems ->
+            onConfirmReturn = { orderId, refundPaise, adjType, reason, returnItems, onResult ->
                 viewModel.processReturn(
                     orderId = orderId,
                     refundAmountPaise = refundPaise,
                     adjustmentType = adjType,
                     reason = reason,
-                    items = returnItems
+                    items = returnItems,
+                    onResult = onResult
                 )
-                showReturnDialog = false
             }
         )
     }
@@ -578,6 +581,7 @@ fun PosQuickBillingScreen(viewModel: MainViewModel) {
 
 @Composable
 fun ReturnsProcessingDialog(
+    viewModel: MainViewModel,
     orders: List<OrderEntity>,
     onDismiss: () -> Unit,
     onConfirmReturn: (
@@ -585,22 +589,89 @@ fun ReturnsProcessingDialog(
         refundAmountPaise: Long,
         adjustmentType: ReturnAdjustmentType,
         reason: String,
-        items: List<ReturnItemEntity>
+        items: List<ReturnItemEntity>,
+        onResult: (Boolean, String) -> Unit
     ) -> Unit
 ) {
     val completedOrders = remember(orders) {
         orders.filter { it.status == OrderStatus.DISPATCHED }
     }
 
-    var selectedOrder by remember { mutableStateOf<OrderEntity?>(completedOrders.firstOrNull()) }
+    var selectedOrder by remember { mutableStateOf(completedOrders.firstOrNull()) }
+    var orderItems by remember { mutableStateOf<List<OrderItemEntity>>(emptyList()) }
+    var selectedQuantities by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var refundAmountRupees by remember { mutableStateOf("") }
     var adjustmentType by remember { mutableStateOf<ReturnAdjustmentType>(ReturnAdjustmentType.REFUND_CASH) }
     var shouldRestock by remember { mutableStateOf(true) }
     var reason by remember { mutableStateOf("Customer size mismatch / Defective item") }
 
+    LaunchedEffect(orders) {
+        if (selectedOrder == null && completedOrders.isNotEmpty()) {
+            selectedOrder = completedOrders.first()
+        }
+    }
+
+    LaunchedEffect(selectedOrder?.id) {
+        selectedQuantities = emptyMap()
+        refundAmountRupees = ""
+        val orderId = selectedOrder?.id
+        orderItems = if (orderId == null) emptyList() else viewModel.repository.getOrderItems(orderId)
+    }
+
     val maxAllowedRefundPaise = remember(selectedOrder) {
-        val o = selectedOrder ?: return@remember 0L
-        (o.totalPaise - o.returnedTotalPaise).coerceAtLeast(0L)
+        val order = selectedOrder ?: return@remember 0L
+        (order.totalPaise - order.returnedTotalPaise).coerceAtLeast(0L)
+    }
+
+    val hasInvalidQuantity = remember(orderItems, selectedQuantities) {
+        orderItems.any { item ->
+            val raw = selectedQuantities[item.id].orEmpty().trim()
+            if (raw.isBlank()) {
+                false
+            } else {
+                val requested = raw.toDoubleOrNull()
+                val remaining = (item.quantity - item.returnedQuantity).coerceAtLeast(0.0)
+                requested == null || !requested.isFinite() || requested < 0.0 || requested > remaining
+            }
+        }
+    }
+
+    val selectedReturnItems = remember(orderItems, selectedQuantities, shouldRestock) {
+        orderItems.mapNotNull { item ->
+            val requested = selectedQuantities[item.id]?.trim()?.toDoubleOrNull() ?: 0.0
+            val remaining = (item.quantity - item.returnedQuantity).coerceAtLeast(0.0)
+            if (!requested.isFinite() || requested <= 0.0 || requested > remaining || item.quantity <= 0.0) {
+                null
+            } else {
+                ReturnItemEntity(
+                    id = UUID.randomUUID().toString(),
+                    returnId = "",
+                    orderItemId = item.id,
+                    productId = item.productId,
+                    productName = item.productName,
+                    quantity = requested,
+                    refundUnitPricePaise = (item.totalPaise.toDouble() / item.quantity).toLong().coerceAtLeast(0L),
+                    restocked = shouldRestock
+                )
+            }
+        }
+    }
+
+    val maximumRefundForSelectedItemsPaise = remember(selectedReturnItems, orderItems) {
+        selectedReturnItems.sumOf { returned ->
+            val original = orderItems.firstOrNull { it.id == returned.orderItemId }
+                ?: return@sumOf 0L
+            if (original.quantity > 0.0) {
+                Math.round(original.totalPaise.toDouble() * returned.quantity / original.quantity).coerceAtLeast(0L)
+            } else 0L
+        }
+    }
+
+    LaunchedEffect(maximumRefundForSelectedItemsPaise, maxAllowedRefundPaise) {
+        if (selectedReturnItems.isNotEmpty()) {
+            val limit = minOf(maximumRefundForSelectedItemsPaise, maxAllowedRefundPaise)
+            refundAmountRupees = String.format(java.util.Locale.US, "%.2f", limit / 100.0)
+        }
     }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -614,6 +685,7 @@ fun ReturnsProcessingDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -634,12 +706,11 @@ fun ReturnsProcessingDialog(
                 }
 
                 Text(
-                    text = "Select original order to return. MerchSpring ensures double-returns and excess refunds are mathematically blocked.",
+                    text = "Select the original order, then enter a return quantity for each item. The app checks remaining item quantities and caps the refund to the selected line values.",
                     fontSize = 12.sp,
                     color = LightSlate
                 )
 
-                // Pick order
                 Text("Select Order", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 LazyColumn(
                     modifier = Modifier
@@ -650,7 +721,7 @@ fun ReturnsProcessingDialog(
                         .padding(6.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    items(completedOrders) { order ->
+                    items(completedOrders, key = { it.id }) { order ->
                         val isSelected = selectedOrder?.id == order.id
                         val remainingRefund = (order.totalPaise - order.returnedTotalPaise).coerceAtLeast(0L)
                         Row(
@@ -658,53 +729,99 @@ fun ReturnsProcessingDialog(
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(if (isSelected) BrandTealContainer else Color.Transparent)
-                                .clickable {
-                                    selectedOrder = order
-                                    refundAmountRupees = (remainingRefund / 100.0).toString()
-                                }
+                                .clickable { selectedOrder = order }
                                 .padding(8.dp),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Column {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = "${order.orderNumber} • ${order.customerName}",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 12.sp
                                 )
                                 Text(
-                                    text = "Total: ${order.totalPaise.toRupeesString()} | Already Returned: ${order.returnedTotalPaise.toRupeesString()}",
+                                    text = "Total: ${order.totalPaise.toRupeesString()} | Returned: ${order.returnedTotalPaise.toRupeesString()}",
                                     fontSize = 10.sp,
                                     color = LightSlate
                                 )
                             }
                             Text(
-                                text = "Eligible: ${remainingRefund.toRupeesString()}",
+                                text = "Balance: ${remainingRefund.toRupeesString()}",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (remainingRefund > 0) BrandTeal else StatusCoral
+                                color = if (remainingRefund > 0L) BrandTeal else StatusCoral
                             )
                         }
                     }
                 }
 
-                // Refund Amount Input with Max Cap Label
-                Column {
-                    Text(
-                        text = "Refund Amount (Max: ${maxAllowedRefundPaise.toRupeesString()})",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    OutlinedTextField(
-                        value = refundAmountRupees,
-                        onValueChange = { refundAmountRupees = it },
-                        placeholder = { Text("0.00") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                Text("Select items and quantities", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                if (selectedOrder == null) {
+                    Text("Select a dispatched order first.", fontSize = 11.sp, color = LightSlate)
+                } else if (orderItems.isEmpty()) {
+                    Text("This order has no items available to return.", fontSize = 11.sp, color = LightSlate)
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(150.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                            .padding(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(orderItems, key = { it.id }) { item ->
+                            val remaining = (item.quantity - item.returnedQuantity).coerceAtLeast(0.0)
+                            if (remaining > 0.0) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(item.productName, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            "Returnable: ${String.format(java.util.Locale.US, "%.3f", remaining).trimEnd('0').trimEnd('.')}",
+                                            fontSize = 10.sp,
+                                            color = LightSlate
+                                        )
+                                    }
+                                    OutlinedTextField(
+                                        value = selectedQuantities[item.id].orEmpty(),
+                                        onValueChange = { value ->
+                                            val sanitized = value.filter { it.isDigit() || it == '.' }
+                                            selectedQuantities = selectedQuantities + (item.id to sanitized)
+                                        },
+                                        label = { Text("Qty") },
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier.width(105.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
-                // Adjustment Type Selector
+                Text(
+                    text = "Refund amount (maximum for selected items: ${minOf(maximumRefundForSelectedItemsPaise, maxAllowedRefundPaise).toRupeesString()})",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "This preview uses the saved line totals. Verify the applicable tax-refund treatment before using it as an official refund or GST adjustment.",
+                    fontSize = 10.sp,
+                    color = StatusAmber
+                )
+                OutlinedTextField(
+                    value = refundAmountRupees,
+                    onValueChange = { refundAmountRupees = it },
+                    placeholder = { Text("0.00") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
                 Text("Refund / Adjustment Mode", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -716,13 +833,11 @@ fun ReturnsProcessingDialog(
                         Pair(ReturnAdjustmentType.STORE_CREDIT, "Credit"),
                         Pair(ReturnAdjustmentType.EXCHANGE, "Replace")
                     )
-                    returnAdjustmentOptions.forEach { pair ->
-                        val type = pair.first
-                        val label = pair.second
+                    returnAdjustmentOptions.forEach { option ->
                         FilterChip(
-                            selected = adjustmentType == type,
-                            onClick = { adjustmentType = type },
-                            label = { Text(label, fontSize = 11.sp) },
+                            selected = adjustmentType == option.first,
+                            onClick = { adjustmentType = option.first },
+                            label = { Text(option.second, fontSize = 11.sp) },
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = BrandTeal,
                                 selectedLabelColor = MidnightNavy
@@ -731,7 +846,6 @@ fun ReturnsProcessingDialog(
                     }
                 }
 
-                // Restock checkbox
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.clickable { shouldRestock = !shouldRestock }
@@ -741,7 +855,6 @@ fun ReturnsProcessingDialog(
                     Text("Restock returned goods back to physical inventory", fontSize = 12.sp)
                 }
 
-                // Reason input
                 OutlinedTextField(
                     value = reason,
                     onValueChange = { reason = it },
@@ -750,36 +863,44 @@ fun ReturnsProcessingDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // Confirm button
-                val currentEnteredPaise = ((refundAmountRupees.toDoubleOrNull() ?: 0.0) * 100).toLong()
-                val isValid = selectedOrder != null && currentEnteredPaise > 0 && currentEnteredPaise <= maxAllowedRefundPaise
+                val currentEnteredPaise = ((refundAmountRupees.toDoubleOrNull() ?: 0.0) * 100.0).toLong()
+                val refundLimitPaise = minOf(maximumRefundForSelectedItemsPaise, maxAllowedRefundPaise)
+                val isExchange = adjustmentType == ReturnAdjustmentType.EXCHANGE ||
+                    adjustmentType == ReturnAdjustmentType.EXCHANGE_REPLACEMENT
+                val isValid = selectedOrder != null &&
+                    selectedReturnItems.isNotEmpty() &&
+                    !hasInvalidQuantity &&
+                    currentEnteredPaise >= 0L &&
+                    (currentEnteredPaise > 0L || isExchange) &&
+                    currentEnteredPaise <= refundLimitPaise
 
                 Button(
                     onClick = {
-                        val ord = selectedOrder ?: return@Button
-                        val sampleItem = ReturnItemEntity(
-                            id = UUID.randomUUID().toString(),
-                            returnId = "",
-                            orderItemId = "ITEM-1",
-                            productId = "PROD-SAMPLE",
-                            productName = "Returned Product",
-                            quantity = 1.0,
-                            refundUnitPricePaise = currentEnteredPaise,
-                            restocked = shouldRestock
-                        )
-                        onConfirmReturn(ord.id, currentEnteredPaise, adjustmentType, reason, listOf(sampleItem))
+                        val order = selectedOrder ?: return@Button
+                        onConfirmReturn(
+                            order.id,
+                            currentEnteredPaise,
+                            adjustmentType,
+                            reason,
+                            selectedReturnItems
+                        ) { succeeded, _ ->
+                            if (succeeded) onDismiss()
+                        }
                     },
                     enabled = isValid,
                     colors = ButtonDefaults.buttonColors(containerColor = StatusCoral),
                     shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(46.dp)
+                    modifier = Modifier.fillMaxWidth().height(46.dp)
                 ) {
                     Icon(Icons.Default.Check, contentDescription = null, tint = Color.White)
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (isValid) "Apply Refund (${currentEnteredPaise.toRupeesString()})" else "Enter Valid Refund (≤ Max)",
+                        text = when {
+                            hasInvalidQuantity -> "Correct Return Quantities"
+                            selectedReturnItems.isEmpty() -> "Select Items and Quantities"
+                            isValid -> "Confirm Return (${currentEnteredPaise.toRupeesString()})"
+                            else -> "Enter Valid Refund"
+                        },
                         color = Color.White,
                         fontWeight = FontWeight.Bold
                     )
