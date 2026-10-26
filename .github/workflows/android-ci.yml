@@ -1,0 +1,55 @@
+name: Android CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ci
+  cancel-in-progress: false
+
+jobs:
+  build-and-test:
+    name: Assemble debug APK and run unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Install required Android SDK packages
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "platforms;android-36.1" "build-tools;36.0.0"
+
+      - name: Create an ephemeral debug signing key
+        run: |
+          keytool -genkeypair -v \
+            -keystore debug.keystore \
+            -storepass android \
+            -keypass android \
+            -alias androiddebugkey \
+            -dname "CN=CI Android Debug,O=MerchSpring AI,C=US" \
+            -keyalg RSA -keysize 2048 -validity 10000
+
+      - name: Assemble debug APK and run unit tests
+        run: gradle :app:assembleDebug :app:testDebugUnitTest --no-daemon
