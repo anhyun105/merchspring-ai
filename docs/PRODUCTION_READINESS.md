@@ -37,6 +37,7 @@ This checklist records work that must be completed before MerchSpring AI is prom
 
 - [ ] Implement an append-only payment/receipt ledger with amount, method, timestamp, branch, reference, and reversal/correction records. The current models largely store an aggregate paid amount and a single payment-method string per order/purchase; therefore later partial payments cannot be reliably reconciled to their actual date/method for cash closing.
 - [ ] Implement branch-specific inventory balances or a stock ledger per product and branch. Branch and transfer screens currently model branch metadata/transfer events, but the product stock record is global rather than isolated per branch.
+- [ ] Implement the complete exchange workflow: the current UI records the original item return only and does not issue a replacement item or decrement replacement stock.
 - [ ] Define store-credit and exchange accounting explicitly; the current return workflow updates item quantities and stock, but it is not a complete credit-note, tax adjustment, or store-credit liability system.
 - [ ] Verify sale confirmation, stock reservation, dispatch, purchase receiving, return/restock, payment, refund, transfer, and cash-closing transitions with automated tests.
 - [ ] Reconcile dashboard/report totals against stored records, especially revenue vs cash collected and gross profit vs expenses.
