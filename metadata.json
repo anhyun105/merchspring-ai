@@ -1,0 +1,6 @@
+{
+  "name": "MerchSpring AI",
+  "description": "Your Business, in Sync. Premium AI-powered inventory, sales, purchases, GST invoices, and 3D warehouse intelligence for Indian businesses.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
