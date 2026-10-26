@@ -30,7 +30,13 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
     suspend fun initializeIfEmpty() {
         val existingSettings = db.settingsDao().getSettingsSync()
         if (existingSettings == null) {
-            loadDemoData()
+            // New installations start with a clean workspace. Demo records remain
+            // available through the explicit "Reload Demo Data" action in Settings.
+            clearAllToFreshWorkspace(
+                businessName = "My Business",
+                ownerName = "",
+                gstin = ""
+            )
         }
     }
 
@@ -73,7 +79,7 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
             db.clearAllTables()
             val freshSettings = BusinessSettingsEntity(
                 businessName = businessName.ifBlank { "My Business" },
-                ownerName = ownerName.ifBlank { "Store Owner" },
+                ownerName = ownerName.trim(),
                 gstin = gstin,
                 industryProfile = profile,
                 isSetupComplete = true
@@ -82,9 +88,9 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
             val primaryBranch = BranchEntity(
                 id = "BRANCH-MAIN",
                 name = "${businessName.ifBlank { "Main" }} Main Store",
-                address = "Store Location",
-                city = "Bengaluru",
-                phone = "+91 98200 00000",
+                address = "",
+                city = "",
+                phone = "",
                 isPrimary = true
             )
             db.branchDao().insertOrUpdate(primaryBranch)
