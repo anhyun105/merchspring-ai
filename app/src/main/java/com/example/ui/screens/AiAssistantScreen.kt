@@ -127,7 +127,7 @@ fun AiAssistantScreen(
             items(messages, key = { it.id }) { msg ->
                 ChatBubble(
                     msg = msg,
-                    onExecuteProposal = { viewModel.executeActionProposal(it) }
+                    onExecuteProposal = { proposal, onResult -> viewModel.executeActionProposal(proposal, onResult) }
                 )
             }
 
@@ -234,7 +234,10 @@ fun AiAssistantScreen(
 @Composable
 fun ChatBubble(
     msg: ChatMessage,
-    onExecuteProposal: (com.example.model.StructuredActionProposal) -> Unit = {}
+    onExecuteProposal: (
+        com.example.model.StructuredActionProposal,
+        (Boolean, String) -> Unit
+    ) -> Unit = { _, onResult -> onResult(false, "Action execution is unavailable.") }
 ) {
     val isUser = msg.role == "user"
     val uriHandler = LocalUriHandler.current
@@ -363,6 +366,8 @@ fun ChatBubble(
             // If this message contains a structured business action proposal, render confirmation card
             msg.proposal?.let { proposal ->
                 var isExecuted by remember { mutableStateOf(false) }
+                var isExecuting by remember { mutableStateOf(false) }
+                var executionMessage by remember { mutableStateOf<String?>(null) }
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Card(
@@ -389,11 +394,20 @@ fun ChatBubble(
                                 color = BrandTeal
                             )
                             Surface(
-                                color = if (isExecuted) Color(0xFF1B5E20) else StatusAmberContainer,
+                                color = when {
+                                    isExecuted -> Color(0xFF1B5E20)
+                                    isExecuting -> MaterialTheme.colorScheme.secondaryContainer
+                                    else -> StatusAmberContainer
+                                },
                                 shape = RoundedCornerShape(4.dp)
                             ) {
                                 Text(
-                                    text = if (isExecuted) "APPLIED" else "NEEDS CONFIRMATION",
+                                    text = when {
+                                        isExecuted -> "APPLIED"
+                                        isExecuting -> "APPLYING"
+                                        executionMessage != null -> "NOT APPLIED"
+                                        else -> "NEEDS CONFIRMATION"
+                                    },
                                     color = if (isExecuted) Color.White else StatusAmber,
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold,
@@ -408,6 +422,14 @@ fun ChatBubble(
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface
                         )
+
+                        executionMessage?.let { resultText ->
+                            Text(
+                                text = resultText,
+                                fontSize = 11.sp,
+                                color = if (isExecuted) Color(0xFF1B5E20) else StatusCoral
+                            )
+                        }
 
                         // Details breakdown
                         if (proposal.details.isNotEmpty()) {
@@ -439,18 +461,37 @@ fun ChatBubble(
 
                             Button(
                                 onClick = {
-                                    onExecuteProposal(proposal)
-                                    isExecuted = true
+                                    isExecuting = true
+                                    executionMessage = null
+                                    onExecuteProposal(proposal) { success, message ->
+                                        isExecuting = false
+                                        isExecuted = success
+                                        executionMessage = message
+                                    }
                                 },
+                                enabled = !isExecuting,
                                 colors = ButtonDefaults.buttonColors(containerColor = BrandTeal),
                                 shape = RoundedCornerShape(6.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(38.dp)
                             ) {
-                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MidnightNavy, modifier = Modifier.size(16.dp))
+                                if (isExecuting) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MidnightNavy
+                                    )
+                                } else {
+                                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MidnightNavy, modifier = Modifier.size(16.dp))
+                                }
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Confirm & Execute", color = MidnightNavy, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text(
+                                    if (isExecuting) "Applying..." else "Confirm & Execute",
+                                    color = MidnightNavy,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
                             }
                         } else {
                             Row(
