@@ -522,100 +522,114 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Confirms and applies a structured action proposed by the AI Assistant.
      * Guaranteed safe: Never triggered automatically without user tap.
      */
-    fun executeActionProposal(proposal: StructuredActionProposal) {
+    fun executeActionProposal(
+        proposal: StructuredActionProposal,
+        onResult: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
         viewModelScope.launch {
-            when (proposal.type) {
-                ActionProposalType.ADD_STOCK -> {
-                    val p = products.value.firstOrNull { it.id == proposal.targetEntityId }
-                    if (p != null) {
-                        val newQty = p.physicalStock + proposal.quantity
-                        val result = repository.adjustStock(p.id, newQty, "AI Assistant Confirmed Restock")
-                        snackbarMessage.value = if (result.isSuccess) {
-                            "Action Applied: Added ${proposal.quantity} units to '${p.name}'. New physical stock: ${newQty}."
+            var succeeded = false
+            var message = "The proposed action was not applied."
+            try {
+                when (proposal.type) {
+                    ActionProposalType.ADD_STOCK -> {
+                        val result = repository.addStock(
+                            productId = proposal.targetEntityId,
+                            quantity = proposal.quantity,
+                            reason = "AI Assistant stock addition confirmed by user"
+                        )
+                        if (result.isSuccess) {
+                            succeeded = true
+                            message = "Stock updated. Added ${proposal.quantity} units to '${proposal.targetEntityName}'. New physical stock: ${result.getOrNull()}."
                         } else {
-                            result.exceptionOrNull()?.message ?: "Could not update stock. No change was confirmed."
+                            message = result.exceptionOrNull()?.message ?: "Stock was not changed."
                         }
-                    } else {
-                        snackbarMessage.value = "Target product not found."
                     }
-                }
-                ActionProposalType.CONFIRM_ORDER -> {
-                    val res = repository.confirmOrder(proposal.targetEntityId)
-                    if (res.isSuccess) {
-                        snackbarMessage.value = "Action Applied: Confirmed order ${proposal.targetEntityName} and reserved stock."
-                    } else {
-                        snackbarMessage.value = res.exceptionOrNull()?.message ?: "Failed to confirm order."
-                    }
-                }
-                ActionProposalType.RECORD_EXPENSE -> {
-                    val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
-                    val expense = ExpenseEntity(
-                        id = "EXP-${UUID.randomUUID().toString().take(8)}",
-                        category = proposal.targetEntityId.ifBlank { "Misc" },
-                        amountPaise = proposal.amountPaise,
-                        date = today,
-                        description = proposal.summary,
-                        paymentMethod = "Cash"
-                    )
-                    repository.recordExpense(expense)
-                    snackbarMessage.value = "Action Applied: Recorded expense of ${proposal.amountPaise.toRupeesString()} (${expense.category})."
-                }
-                ActionProposalType.CREATE_PO, ActionProposalType.REORDER_RESTOCK -> {
-                    val p = products.value.firstOrNull { it.id == proposal.targetEntityId }
-                    if (p != null) {
-                        val availableSuppliers = suppliers.value
-                        val preferred = p.preferredSupplier.trim()
-                        val preferredMatches = if (preferred.isBlank()) {
-                            emptyList()
+                    ActionProposalType.CONFIRM_ORDER -> {
+                        val result = repository.confirmOrder(proposal.targetEntityId)
+                        if (result.isSuccess) {
+                            succeeded = true
+                            message = "Order ${proposal.targetEntityName} confirmed and stock reserved."
                         } else {
-                            availableSuppliers.filter {
-                                it.id.equals(preferred, ignoreCase = true) ||
-                                    it.name.equals(preferred, ignoreCase = true)
+                            message = result.exceptionOrNull()?.message ?: "Order confirmation failed; no action was applied."
+                        }
+                    }
+                    ActionProposalType.RECORD_EXPENSE -> {
+                        if (proposal.amountPaise <= 0L) {
+                            message = "Expense amount must be greater than zero."
+                        } else {
+                            val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+                            val expense = ExpenseEntity(
+                                id = "EXP-${UUID.randomUUID().toString().take(8)}",
+                                category = proposal.targetEntityId.ifBlank { "Misc" },
+                                amountPaise = proposal.amountPaise,
+                                date = today,
+                                description = proposal.summary,
+                                paymentMethod = "Cash"
+                            )
+                            repository.recordExpense(expense)
+                            succeeded = true
+                            message = "Expense of ${proposal.amountPaise.toRupeesString()} recorded (${expense.category})."
+                        }
+                    }
+                    ActionProposalType.CREATE_PO, ActionProposalType.REORDER_RESTOCK -> {
+                        val product = db.productDao().getProductById(proposal.targetEntityId)
+                        if (product == null) {
+                            message = "The selected product no longer exists. No purchase order was created."
+                        } else if (!proposal.quantity.isFinite() || proposal.quantity <= 0.0) {
+                            message = "Purchase quantity must be a positive finite number."
+                        } else {
+                            val currentSuppliers = repository.suppliers.firstOrNull().orEmpty()
+                            val preferred = product.preferredSupplier.trim()
+                            val matchedSuppliers = if (preferred.isBlank()) {
+                                emptyList()
+                            } else {
+                                currentSuppliers.filter {
+                                    it.id.equals(preferred, ignoreCase = true) || it.name.equals(preferred, ignoreCase = true)
+                                }
+                            }
+                            val supplier = matchedSuppliers.singleOrNull()
+                            if (supplier == null) {
+                                message = when {
+                                    currentSuppliers.isEmpty() -> "Add a supplier before creating a purchase-order draft."
+                                    matchedSuppliers.size > 1 -> "The product's preferred supplier is ambiguous. Choose a supplier in Purchases."
+                                    else -> "Set this product's preferred supplier first, or create a purchase order manually to choose the supplier."
+                                }
+                            } else {
+                                val poId = "PO-${UUID.randomUUID().toString().take(8).uppercase()}"
+                                val total = (product.costPricePaise * proposal.quantity).toLong()
+                                val po = PurchaseOrderEntity(
+                                    id = poId,
+                                    poNumber = poId,
+                                    supplierId = supplier.id,
+                                    supplierName = supplier.name,
+                                    totalPaise = total,
+                                    status = PurchaseStatus.DRAFT
+                                )
+                                val item = PurchaseItemEntity(
+                                    id = UUID.randomUUID().toString(),
+                                    purchaseOrderId = poId,
+                                    productId = product.id,
+                                    productName = product.name,
+                                    orderedQuantity = proposal.quantity,
+                                    unitCostPaise = product.costPricePaise,
+                                    gstRate = product.gstRate,
+                                    totalPaise = total
+                                )
+                                repository.createPurchaseOrder(po, listOf(item))
+                                succeeded = true
+                                message = "Draft purchase order ${po.poNumber} created for ${supplier.name}. Review pricing and applicable tax before ordering."
                             }
                         }
-                        val sup = preferredMatches.singleOrNull()
-                            ?: availableSuppliers.singleOrNull().takeIf { preferredMatches.isEmpty() }
-                        if (sup == null) {
-                            snackbarMessage.value = when {
-                                availableSuppliers.isEmpty() ->
-                                    "Add a supplier before creating a purchase-order draft."
-                                preferredMatches.size > 1 ->
-                                    "More than one supplier matches this product. Open Purchases and select the supplier manually."
-                                else ->
-                                    "Set this product's preferred supplier, or create the purchase order manually to choose the supplier."
-                            }
-                            return@launch
-                        }
-                        val poId = "PO-${UUID.randomUUID().toString().take(6).uppercase()}"
-                        // This is a tax-exclusive estimate. The owner must review tax and pricing
-                        // in the draft before it can be ordered.
-                        val total = (p.costPricePaise * proposal.quantity).toLong()
-                        val po = PurchaseOrderEntity(
-                            id = poId,
-                            poNumber = poId,
-                            supplierId = sup.id,
-                            supplierName = sup.name,
-                            totalPaise = total,
-                            status = PurchaseStatus.DRAFT
-                        )
-                        val item = PurchaseItemEntity(
-                            id = UUID.randomUUID().toString(),
-                            purchaseOrderId = poId,
-                            productId = p.id,
-                            productName = p.name,
-                            orderedQuantity = proposal.quantity,
-                            unitCostPaise = p.costPricePaise,
-                            gstRate = p.gstRate,
-                            totalPaise = total
-                        )
-                        repository.createPurchaseOrder(po, listOf(item))
-                        snackbarMessage.value = "Draft PO ${po.poNumber} created. Review supplier, quantities, and tax before ordering."
                     }
                 }
+            } catch (error: Exception) {
+                succeeded = false
+                message = error.message?.takeIf { it.isNotBlank() } ?: "The action failed. No success was reported."
             }
+            snackbarMessage.value = message
+            onResult(succeeded, message)
         }
     }
-
     // -------------------------------------------------------------
     // AI Business Assistant
     // -------------------------------------------------------------
