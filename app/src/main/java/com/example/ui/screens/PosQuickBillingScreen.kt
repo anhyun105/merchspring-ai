@@ -39,7 +39,6 @@ fun PosQuickBillingScreen(viewModel: MainViewModel) {
 
     var searchQuery by remember { mutableStateOf("") }
     var barcodeInput by remember { mutableStateOf("") }
-    var selectedCustomerId by remember { mutableStateOf("") }
     var customerNameInput by remember { mutableStateOf("Walk-in Retail Customer") }
     var customerPhoneInput by remember { mutableStateOf("") }
 
@@ -57,13 +56,23 @@ fun PosQuickBillingScreen(viewModel: MainViewModel) {
             (product.sellingPricePaise * qty).toLong()
         }
     }
-    val discountPaise = remember(discountRupees) {
-        val d = discountRupees.toDoubleOrNull() ?: 0.0
-        (d * 100).toLong().coerceIn(0L, subtotalPaise)
+    val discountPaise = remember(discountRupees, subtotalPaise) {
+        val enteredRupees = discountRupees.toDoubleOrNull()
+            ?.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0
+        (enteredRupees * 100.0).toLong().coerceIn(0L, subtotalPaise)
     }
     val taxablePaise = (subtotalPaise - discountPaise).coerceAtLeast(0L)
-    val gstPaise = remember(taxablePaise) {
-        (taxablePaise * 0.05).toLong() // 5% average GST
+    val gstPaise = remember(cartItems, discountPaise, subtotalPaise) {
+        cartItems.entries.sumOf { (product, quantity) ->
+            val lineSubtotalPaise = (product.sellingPricePaise * quantity).toLong().coerceAtLeast(0L)
+            val lineDiscountPaise = if (subtotalPaise > 0L) {
+                (discountPaise.toDouble() * lineSubtotalPaise / subtotalPaise)
+                    .toLong()
+                    .coerceIn(0L, lineSubtotalPaise)
+            } else 0L
+            val lineTaxablePaise = (lineSubtotalPaise - lineDiscountPaise).coerceAtLeast(0L)
+            (lineTaxablePaise.toDouble() * product.gstRate.coerceIn(0.0, 100.0) / 100.0).toLong()
+        }
     }
     val totalBillPaise = taxablePaise + gstPaise
 
@@ -446,43 +455,76 @@ fun PosQuickBillingScreen(viewModel: MainViewModel) {
                                 return@Button
                             }
 
+                            val normalizedName = customerNameInput.trim()
+                            val normalizedPhone = customerPhoneInput.trim()
+                            val walkInName = "Walk-in Retail Customer"
+                            val matchingCustomer = customers.firstOrNull { customer ->
+                                (normalizedName.isNotBlank() && customer.name.equals(normalizedName, ignoreCase = true)) ||
+                                    (normalizedPhone.isNotBlank() && customer.phone.trim() == normalizedPhone)
+                            }
+                            val isCreditSale = paymentMethod.equals("Credit", ignoreCase = true)
+                            if (isCreditSale && (matchingCustomer == null &&
+                                    (normalizedName.isBlank() || normalizedName.equals(walkInName, ignoreCase = true)))) {
+                                viewModel.snackbarMessage.value = "Credit sales require a named customer. Enter the customer name and phone before checkout."
+                                return@Button
+                            }
+
                             val orderId = "ORD-${UUID.randomUUID().toString().take(6).uppercase()}"
-                            val itemsList = cartItems.map { (p, q) ->
-                                val taxAmount = ((p.sellingPricePaise * q) * 0.05).toLong()
+                            val orderItems = cartItems.map { (product, quantity) ->
+                                val lineSubtotalPaise = (product.sellingPricePaise * quantity).toLong().coerceAtLeast(0L)
+                                val lineDiscountPaise = if (subtotalPaise > 0L) {
+                                    (discountPaise.toDouble() * lineSubtotalPaise / subtotalPaise)
+                                        .toLong()
+                                        .coerceIn(0L, lineSubtotalPaise)
+                                } else 0L
+                                val lineTaxablePaise = (lineSubtotalPaise - lineDiscountPaise).coerceAtLeast(0L)
+                                val taxAmountPaise = (
+                                    lineTaxablePaise.toDouble() * product.gstRate.coerceIn(0.0, 100.0) / 100.0
+                                ).toLong()
                                 OrderItemEntity(
                                     id = UUID.randomUUID().toString(),
                                     orderId = orderId,
-                                    productId = p.id,
-                                    productName = p.name,
-                                    sku = p.sku,
-                                    quantity = q,
+                                    productId = product.id,
+                                    productName = product.name,
+                                    sku = product.sku,
+                                    quantity = quantity,
                                     returnedQuantity = 0.0,
-                                    unitPricePaise = p.sellingPricePaise,
-                                    costPriceSnapshotPaise = p.costPricePaise,
-                                    gstRate = 5.0,
-                                    taxAmountPaise = taxAmount,
-                                    totalPaise = ((p.sellingPricePaise * q) + taxAmount).toLong()
+                                    unitPricePaise = product.sellingPricePaise,
+                                    costPriceSnapshotPaise = product.costPricePaise,
+                                    gstRate = product.gstRate,
+                                    taxAmountPaise = taxAmountPaise,
+                                    totalPaise = lineTaxablePaise + taxAmountPaise
                                 )
+                            }
+                            val customerId = matchingCustomer?.id ?: if (
+                                normalizedName.isNotBlank() && !normalizedName.equals(walkInName, ignoreCase = true)
+                            ) {
+                                "CUS-${UUID.randomUUID().toString().take(8).uppercase()}"
+                            } else "CUS-WALKIN"
+                            val paidPaise = if (isCreditSale) 0L else totalBillPaise
+                            val paymentStatus = when {
+                                paidPaise >= totalBillPaise -> PaymentStatus.PAID
+                                paidPaise > 0L -> PaymentStatus.PARTIAL
+                                else -> PaymentStatus.UNPAID
                             }
 
                             val order = OrderEntity(
                                 id = orderId,
                                 orderNumber = orderId,
-                                customerId = "CUS-WALKIN",
-                                customerName = customerNameInput.ifBlank { "Walk-in Retail Customer" },
-                                customerPhone = customerPhoneInput,
+                                customerId = customerId,
+                                customerName = normalizedName.ifBlank { walkInName },
+                                customerPhone = normalizedPhone,
                                 subtotalPaise = subtotalPaise,
                                 discountPaise = discountPaise,
                                 taxPaise = gstPaise,
                                 totalPaise = totalBillPaise,
                                 status = OrderStatus.CONFIRMED,
-                                paymentStatus = PaymentStatus.PAID,
+                                paymentStatus = paymentStatus,
                                 paymentMethod = paymentMethod,
-                                paidPaise = totalBillPaise,
+                                paidPaise = paidPaise,
                                 branchId = settings?.activeBranchId ?: "BRANCH-MAIN"
                             )
-
-                            viewModel.dispatchQuickSale(order, itemsList)
+                            viewModel.dispatchQuickSale(order, orderItems)
                             cartItems = emptyMap()
                             discountRupees = ""
                         },
