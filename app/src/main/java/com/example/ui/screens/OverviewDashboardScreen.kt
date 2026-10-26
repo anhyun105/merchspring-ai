@@ -79,7 +79,7 @@ fun OverviewDashboardScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "GSTIN: ${settings?.gstin ?: "29AAAAA0000A1Z5"}",
+                            text = settings?.gstin?.takeIf { it.isNotBlank() }?.let { "GSTIN: $it" } ?: "GSTIN not configured",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -225,9 +225,9 @@ fun OverviewDashboardScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     MetricCard(
-                        title = "Realized Sales",
-                        value = metrics.todaySalesPaise.toRupeesString(),
-                        subtitle = "${metrics.completedSalesCount} orders fulfilled",
+                        title = "All-Time Sales",
+                        value = metrics.allTimeSalesPaise.toRupeesString(),
+                        subtitle = "${metrics.completedSalesCount} fulfilled orders, net of recorded returns",
                         icon = Icons.Default.TrendingUp,
                         iconTint = StatusGreen,
                         modifier = Modifier.weight(1f),
