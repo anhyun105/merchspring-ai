@@ -672,18 +672,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val oList = orders.value
             val pendingOrdersSummary = oList.filter { it.status == OrderStatus.CONFIRMED }
                 .joinToString { "${it.orderNumber} for ${it.customerName} (${it.totalPaise.toRupeesString()})" }
+            val lowerPrompt = prompt.lowercase(java.util.Locale.ROOT)
+            val asksForCustomerDetail = listOf(
+                "customer", "debt", "debtor", "udhaar", "outstanding", "payment reminder", "payment reminder", "dues"
+            ).any { it in lowerPrompt }
             val cList = customers.value
-            val debtors = cList.filter { it.outstandingBalancePaise > 0 }
-                .joinToString { "${it.name}: ${it.outstandingBalancePaise.toRupeesString()}" }
+            val debtors = if (asksForCustomerDetail) {
+                cList.filter { it.outstandingBalancePaise > 0 }
+                    .joinToString { "${it.name}: ${it.outstandingBalancePaise.toRupeesString()}" }
+                    .ifBlank { "None" }
+            } else {
+                "Not included for privacy. Ask specifically about customer dues or payment reminders to include customer-level balances."
+            }
 
             val contextText = """
 Today's Dispatched Billings (incl. configured tax): ${metrics.todaySalesPaise.toRupeesString()} (${metrics.todayCompletedSalesCount} orders)
 Inventory Valuation: ${metrics.totalValuationPaise.toRupeesString()}
 Total Recorded Expenses: ${metrics.totalExpensesPaise.toRupeesString()}
 Gross Profit: ${metrics.grossProfitPaise.toRupeesString()} (${String.format(java.util.Locale.US, "%.1f", metrics.grossProfitMarginPercent)}% margin)
-Customer Receivables Dues: ${metrics.customerReceivablesPaise.toRupeesString()}
-Debtors List: ${debtors.ifBlank { "None" }}
-Supplier Payables: ${metrics.supplierPayablesPaise.toRupeesString()}
+Total Customer Receivables (aggregate): ${metrics.customerReceivablesPaise.toRupeesString()}
+Customer-level debtor list: ${debtors}
+Supplier Payables: ${metrics.supplierPayablesPaise.toRupeesString()}""".trimIndent()
 Low Stock Items: ${lowStockNames.ifBlank { "None" }}
 Out of Stock Items: ${outOfStockNames.ifBlank { "None" }}
 Pending Confirmed Orders: ${pendingOrdersSummary.ifBlank { "None" }}
