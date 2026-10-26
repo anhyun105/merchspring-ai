@@ -524,95 +524,110 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
         quantity: Double,
         notes: String
     ): Result<StockTransferEntity> {
-        val product = db.productDao().getProductById(productId)
-            ?: return Result.failure(Exception("Product not found"))
-
-        if (product.availableStock < quantity) {
-            return Result.failure(
-                Exception("Insufficient stock at source branch. Available: ${product.availableStock}, Requested: $quantity")
-            )
+        if (!quantity.isFinite() || quantity <= 0.0) {
+            return Result.failure(IllegalArgumentException("Transfer quantity must be a positive finite number."))
+        }
+        if (sourceBranchId.isBlank() || destinationBranchId.isBlank() || sourceBranchId == destinationBranchId) {
+            return Result.failure(IllegalArgumentException("Choose two different, valid branches for a stock transfer."))
         }
 
-        val transferNumber = "TRF-${System.currentTimeMillis().toString().takeLast(5)}"
-        val transferId = "TRF-${UUID.randomUUID().toString().take(8)}"
+        return db.withTransaction {
+            val sourceBranch = db.branchDao().getBranchById(sourceBranchId)
+                ?: return@withTransaction Result.failure<StockTransferEntity>(IllegalStateException("Source branch not found."))
+            val destinationBranch = db.branchDao().getBranchById(destinationBranchId)
+                ?: return@withTransaction Result.failure<StockTransferEntity>(IllegalStateException("Destination branch not found."))
+            val product = db.productDao().getProductById(productId)
+                ?: return@withTransaction Result.failure<StockTransferEntity>(IllegalStateException("Product not found."))
+            if (product.availableStock < quantity) {
+                return@withTransaction Result.failure<StockTransferEntity>(
+                    IllegalStateException("Insufficient source stock for '${product.name}'. Available: ${product.availableStock}, requested: $quantity.")
+                )
+            }
 
-        val transfer = StockTransferEntity(
-            id = transferId,
-            transferNumber = transferNumber,
-            sourceBranchId = sourceBranchId,
-            sourceBranchName = sourceBranchName,
-            destinationBranchId = destinationBranchId,
-            destinationBranchName = destinationBranchName,
-            productId = product.id,
-            productName = product.name,
-            sku = product.sku,
-            quantity = quantity,
-            status = TransferStatus.IN_TRANSIT,
-            notes = notes
-        )
-
-        db.withTransaction {
+            val transferNumber = "TRF-${UUID.randomUUID().toString().take(8).uppercase()}"
+            val transferId = "${transferNumber}-${UUID.randomUUID().toString().take(4).uppercase()}"
+            val transfer = StockTransferEntity(
+                id = transferId,
+                transferNumber = transferNumber,
+                sourceBranchId = sourceBranch.id,
+                sourceBranchName = sourceBranch.name.ifBlank { sourceBranchName },
+                destinationBranchId = destinationBranch.id,
+                destinationBranchName = destinationBranch.name.ifBlank { destinationBranchName },
+                productId = product.id,
+                productName = product.name,
+                sku = product.sku,
+                quantity = quantity,
+                status = TransferStatus.IN_TRANSIT,
+                notes = notes
+            )
             val newPhysical = product.physicalStock - quantity
             db.productDao().updateStock(product.id, newPhysical, product.reservedStock)
-
-            val movement = StockMovementEntity(
-                id = "MOV-${UUID.randomUUID().toString().take(8)}",
-                productId = product.id,
-                productName = product.name,
-                timestamp = System.currentTimeMillis(),
-                movementType = MovementType.BRANCH_TRANSFER_OUT,
-                deltaQuantity = -quantity,
-                physicalBefore = product.physicalStock,
-                physicalAfter = newPhysical,
-                reservedBefore = product.reservedStock,
-                reservedAfter = product.reservedStock,
-                referenceDoc = transferNumber,
-                reason = "Transferred to $destinationBranchName ($transferNumber)"
+            db.stockMovementDao().insert(
+                StockMovementEntity(
+                    id = "MOV-${UUID.randomUUID().toString().take(8)}",
+                    productId = product.id,
+                    productName = product.name,
+                    timestamp = System.currentTimeMillis(),
+                    movementType = MovementType.BRANCH_TRANSFER_OUT,
+                    deltaQuantity = -quantity,
+                    physicalBefore = product.physicalStock,
+                    physicalAfter = newPhysical,
+                    reservedBefore = product.reservedStock,
+                    reservedAfter = product.reservedStock,
+                    referenceDoc = transferNumber,
+                    reason = "Transferred to ${destinationBranch.name} ($transferNumber)"
+                )
             )
-            db.stockMovementDao().insert(movement)
             db.stockTransferDao().insertOrUpdate(transfer)
+            Result.success(transfer)
         }
-
-        return Result.success(transfer)
     }
+
 
     suspend fun receiveTransfer(transferId: String, staffName: String = ""): Result<Unit> {
-        val transfer = db.stockTransferDao().getTransferById(transferId)
-            ?: return Result.failure(Exception("Transfer $transferId not found"))
-
-        if (transfer.status != TransferStatus.IN_TRANSIT) {
-            return Result.failure(Exception("Transfer is not in transit (Current: ${transfer.status})"))
-        }
-
-        val product = db.productDao().getProductById(transfer.productId)
-            ?: return Result.failure(Exception("Product not found"))
-
-        db.withTransaction {
+        return db.withTransaction {
+            val transfer = db.stockTransferDao().getTransferById(transferId)
+                ?: return@withTransaction Result.failure<Unit>(IllegalStateException("Transfer $transferId not found."))
+            if (transfer.status != TransferStatus.IN_TRANSIT) {
+                return@withTransaction Result.failure<Unit>(IllegalStateException("Transfer is not in transit (current status: ${transfer.status})."))
+            }
+            if (!transfer.quantity.isFinite() || transfer.quantity <= 0.0) {
+                return@withTransaction Result.failure<Unit>(IllegalStateException("Transfer quantity is invalid; reconcile this transfer manually."))
+            }
+            if (db.branchDao().getBranchById(transfer.destinationBranchId) == null) {
+                return@withTransaction Result.failure<Unit>(IllegalStateException("Destination branch no longer exists."))
+            }
+            val product = db.productDao().getProductById(transfer.productId)
+                ?: return@withTransaction Result.failure<Unit>(IllegalStateException("Transferred product no longer exists."))
             val newPhysical = product.physicalStock + transfer.quantity
+            if (!newPhysical.isFinite() || newPhysical < product.reservedStock) {
+                return@withTransaction Result.failure<Unit>(IllegalStateException("Receiving this transfer would violate stock constraints."))
+            }
+            val now = System.currentTimeMillis()
             db.productDao().updateStock(product.id, newPhysical, product.reservedStock)
-
-            val movement = StockMovementEntity(
-                id = "MOV-${UUID.randomUUID().toString().take(8)}",
-                productId = product.id,
-                productName = product.name,
-                timestamp = System.currentTimeMillis(),
-                movementType = MovementType.BRANCH_TRANSFER_IN,
-                deltaQuantity = transfer.quantity,
-                physicalBefore = product.physicalStock,
-                physicalAfter = newPhysical,
-                reservedBefore = product.reservedStock,
-                reservedAfter = product.reservedStock,
-                referenceDoc = transfer.transferNumber,
-                reason = "Received at destination from ${transfer.sourceBranchName}"
+            db.stockMovementDao().insert(
+                StockMovementEntity(
+                    id = "MOV-${UUID.randomUUID().toString().take(8)}",
+                    productId = product.id,
+                    productName = product.name,
+                    timestamp = now,
+                    movementType = MovementType.BRANCH_TRANSFER_IN,
+                    deltaQuantity = transfer.quantity,
+                    physicalBefore = product.physicalStock,
+                    physicalAfter = newPhysical,
+                    reservedBefore = product.reservedStock,
+                    reservedAfter = product.reservedStock,
+                    referenceDoc = transfer.transferNumber,
+                    reason = "Received at ${transfer.destinationBranchName} from ${transfer.sourceBranchName}${staffName.trim().takeIf { it.isNotBlank() }?.let { " by $it" } ?: ""}"
+                )
             )
-            db.stockMovementDao().insert(movement)
             db.stockTransferDao().insertOrUpdate(
-                transfer.copy(status = TransferStatus.COMPLETED, receivedAt = System.currentTimeMillis())
+                transfer.copy(status = TransferStatus.COMPLETED, receivedAt = now)
             )
+            Result.success(Unit)
         }
-
-        return Result.success(Unit)
     }
+
 
     // -------------------------------------------------------------
     // Smart Reorder Recommendations Engine
