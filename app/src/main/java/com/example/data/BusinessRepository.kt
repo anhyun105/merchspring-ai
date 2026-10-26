@@ -617,200 +617,217 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
     }
 
     suspend fun confirmOrder(orderId: String): Result<Unit> {
-        val order = db.orderDao().getOrderById(orderId)
-            ?: return Result.failure(Exception("Order $orderId not found"))
-
-        if (order.status != OrderStatus.DRAFT) {
-            return Result.failure(Exception("Only Draft orders can be confirmed. Current status: ${order.status}"))
-        }
-
-        val items = db.orderDao().getItemsForOrder(orderId)
-        if (items.isEmpty()) {
-            return Result.failure(Exception("Cannot confirm an order with no items"))
-        }
-
-        for (item in items) {
-            val product = db.productDao().getProductById(item.productId)
-                ?: return Result.failure(Exception("Product ${item.productName} not found"))
-
-            if (product.availableStock < item.quantity) {
-                return Result.failure(
-                    Exception("Insufficient stock for '${product.name}'. Available: ${product.availableStock}, Requested: ${item.quantity}")
-                )
+        return db.withTransaction {
+            val order = db.orderDao().getOrderById(orderId)
+                ?: return@withTransaction Result.failure<Unit>(IllegalStateException("Order $orderId not found."))
+            if (order.status != OrderStatus.DRAFT) {
+                return@withTransaction Result.failure<Unit>(IllegalStateException("Only Draft orders can be confirmed. Current status: ${order.status}."))
             }
-        }
-
-        db.withTransaction {
-            for (item in items) {
-                val product = db.productDao().getProductById(item.productId)!!
-                val newReserved = product.reservedStock + item.quantity
-                db.productDao().updateStock(product.id, product.physicalStock, newReserved)
-
-                val movement = StockMovementEntity(
-                    id = "MOV-${UUID.randomUUID().toString().take(8)}",
-                    productId = product.id,
-                    productName = product.name,
-                    timestamp = System.currentTimeMillis(),
-                    movementType = MovementType.ORDER_RESERVE,
-                    deltaQuantity = 0.0,
-                    physicalBefore = product.physicalStock,
-                    physicalAfter = product.physicalStock,
-                    reservedBefore = product.reservedStock,
-                    reservedAfter = newReserved,
-                    referenceDoc = order.orderNumber,
-                    reason = "Reserved upon confirming Order ${order.orderNumber}"
-                )
-                db.stockMovementDao().insert(movement)
+            val items = db.orderDao().getItemsForOrder(orderId)
+            if (items.isEmpty()) return@withTransaction Result.failure<Unit>(IllegalStateException("Cannot confirm an empty order."))
+            if (items.any { !it.quantity.isFinite() || it.quantity <= 0.0 }) {
+                return@withTransaction Result.failure<Unit>(IllegalArgumentException("Order quantities must be positive finite numbers."))
             }
 
-            db.orderDao().insertOrUpdate(order.copy(status = OrderStatus.CONFIRMED))
-        }
-
-        return Result.success(Unit)
-    }
-
-    suspend fun dispatchOrder(orderId: String): Result<Unit> {
-        val order = db.orderDao().getOrderById(orderId)
-            ?: return Result.failure(Exception("Order $orderId not found"))
-
-        if (order.status != OrderStatus.CONFIRMED) {
-            return Result.failure(Exception("Only Confirmed orders can be dispatched. Current status: ${order.status}"))
-        }
-
-        val items = db.orderDao().getItemsForOrder(orderId)
-
-        db.withTransaction {
-            for (item in items) {
-                val product = db.productDao().getProductById(item.productId) ?: continue
-                val newPhysical = (product.physicalStock - item.quantity).coerceAtLeast(0.0)
-                val newReserved = (product.reservedStock - item.quantity).coerceAtLeast(0.0)
-
-                db.productDao().updateStock(product.id, newPhysical, newReserved)
-                db.productDao().updateLastSoldTime(product.id, System.currentTimeMillis())
-
-                val movement = StockMovementEntity(
-                    id = "MOV-${UUID.randomUUID().toString().take(8)}",
-                    productId = product.id,
-                    productName = product.name,
-                    timestamp = System.currentTimeMillis(),
-                    movementType = MovementType.OUTWARD_DISPATCH,
-                    deltaQuantity = -item.quantity,
-                    physicalBefore = product.physicalStock,
-                    physicalAfter = newPhysical,
-                    reservedBefore = product.reservedStock,
-                    reservedAfter = newReserved,
-                    referenceDoc = order.orderNumber,
-                    reason = "Dispatched Order ${order.orderNumber} to ${order.customerName}"
-                )
-                db.stockMovementDao().insert(movement)
-            }
-
-            val customer = db.customerDao().getCustomerById(order.customerId)
-            if (customer != null) {
-                val newTotalPurchases = customer.totalPurchasesPaise + order.totalPaise
-                val newBalance = customer.outstandingBalancePaise + order.balanceDuePaise
-                db.customerDao().insertOrUpdate(
-                    customer.copy(
-                        totalPurchasesPaise = newTotalPurchases,
-                        outstandingBalancePaise = newBalance
+            val requestedByProduct = items.groupBy { it.productId }.mapValues { (_, lines) -> lines.sumOf { it.quantity } }
+            val productsById = mutableMapOf<String, ProductEntity>()
+            for ((productId, requested) in requestedByProduct) {
+                val product = db.productDao().getProductById(productId)
+                    ?: return@withTransaction Result.failure<Unit>(IllegalStateException("An order product no longer exists."))
+                if (!requested.isFinite() || product.availableStock < requested) {
+                    return@withTransaction Result.failure<Unit>(
+                        IllegalStateException("Insufficient stock for '${product.name}'. Available: ${product.availableStock}, requested: $requested.")
                     )
-                )
+                }
+                productsById[productId] = product
             }
 
-            db.orderDao().insertOrUpdate(
-                order.copy(
-                    status = OrderStatus.DISPATCHED,
-                    dispatchedAt = System.currentTimeMillis()
-                )
-            )
-        }
-
-        for (item in items) {
-            db.productDao().getProductById(item.productId)?.let { checkAndTriggerLowStockAlert(it) }
-        }
-
-        return Result.success(Unit)
-    }
-
-    suspend fun cancelOrder(orderId: String, reason: String): Result<Unit> {
-        val order = db.orderDao().getOrderById(orderId)
-            ?: return Result.failure(Exception("Order $orderId not found"))
-
-        if (order.status == OrderStatus.DISPATCHED) {
-            return Result.failure(Exception("Cannot cancel an already dispatched order. Use the Return flow instead."))
-        }
-
-        if (order.status == OrderStatus.CANCELLED) {
-            return Result.failure(Exception("Order is already cancelled"))
-        }
-
-        val items = db.orderDao().getItemsForOrder(orderId)
-
-        db.withTransaction {
-            if (order.status == OrderStatus.CONFIRMED) {
-                for (item in items) {
-                    val product = db.productDao().getProductById(item.productId) ?: continue
-                    val newReserved = (product.reservedStock - item.quantity).coerceAtLeast(0.0)
-                    db.productDao().updateStock(product.id, product.physicalStock, newReserved)
-
-                    val movement = StockMovementEntity(
+            for ((productId, requested) in requestedByProduct) {
+                val product = productsById[productId]!!
+                val newReserved = product.reservedStock + requested
+                db.productDao().updateStock(product.id, product.physicalStock, newReserved)
+                db.stockMovementDao().insert(
+                    StockMovementEntity(
                         id = "MOV-${UUID.randomUUID().toString().take(8)}",
                         productId = product.id,
                         productName = product.name,
                         timestamp = System.currentTimeMillis(),
-                        movementType = MovementType.ORDER_RELEASE,
+                        movementType = MovementType.ORDER_RESERVE,
                         deltaQuantity = 0.0,
                         physicalBefore = product.physicalStock,
                         physicalAfter = product.physicalStock,
                         reservedBefore = product.reservedStock,
                         reservedAfter = newReserved,
                         referenceDoc = order.orderNumber,
-                        reason = "Released reservation upon order cancellation: $reason"
+                        reason = "Reserved upon confirming Order ${order.orderNumber}"
                     )
-                    db.stockMovementDao().insert(movement)
-                }
-            }
-
-            db.orderDao().insertOrUpdate(
-                order.copy(
-                    status = OrderStatus.CANCELLED,
-                    cancelledAt = System.currentTimeMillis(),
-                    cancellationReason = reason
                 )
-            )
+            }
+            db.orderDao().insertOrUpdate(order.copy(status = OrderStatus.CONFIRMED))
+            Result.success(Unit)
         }
-
-        return Result.success(Unit)
     }
 
-    suspend fun recordOrderPayment(orderId: String, amountPaise: Long, method: String): Result<Unit> {
-        val order = db.orderDao().getOrderById(orderId)
-            ?: return Result.failure(Exception("Order $orderId not found"))
 
-        val newPaid = (order.paidPaise + amountPaise).coerceAtMost(order.totalPaise)
-        val newStatus = when {
-            newPaid >= order.totalPaise -> PaymentStatus.PAID
-            newPaid > 0 -> PaymentStatus.PARTIAL
-            else -> PaymentStatus.UNPAID
-        }
+    suspend fun dispatchOrder(orderId: String): Result<Unit> {
+        val result = db.withTransaction {
+            val order = db.orderDao().getOrderById(orderId)
+                ?: return@withTransaction Result.failure<Unit>(IllegalStateException("Order $orderId not found."))
+            if (order.status != OrderStatus.CONFIRMED) {
+                return@withTransaction Result.failure<Unit>(IllegalStateException("Only Confirmed orders can be dispatched. Current status: ${order.status}."))
+            }
+            val items = db.orderDao().getItemsForOrder(orderId)
+            if (items.isEmpty() || items.any { !it.quantity.isFinite() || it.quantity <= 0.0 }) {
+                return@withTransaction Result.failure<Unit>(IllegalStateException("The order has no valid items to dispatch."))
+            }
 
-        db.withTransaction {
-            db.orderDao().insertOrUpdate(
-                order.copy(
-                    paidPaise = newPaid,
-                    paymentStatus = newStatus,
-                    paymentMethod = method
+            val requestedByProduct = items.groupBy { it.productId }.mapValues { (_, lines) -> lines.sumOf { it.quantity } }
+            val productsById = mutableMapOf<String, ProductEntity>()
+            for ((productId, requested) in requestedByProduct) {
+                val product = db.productDao().getProductById(productId)
+                    ?: return@withTransaction Result.failure<Unit>(IllegalStateException("An order product no longer exists."))
+                if (product.physicalStock < requested || product.reservedStock < requested) {
+                    return@withTransaction Result.failure<Unit>(
+                        IllegalStateException("Stock reservation mismatch for '${product.name}'. Physical: ${product.physicalStock}, reserved: ${product.reservedStock}, required: $requested. Reconcile inventory before dispatch.")
+                    )
+                }
+                productsById[productId] = product
+            }
+
+            val dispatchTime = System.currentTimeMillis()
+            for ((productId, requested) in requestedByProduct) {
+                val product = productsById[productId]!!
+                val newPhysical = product.physicalStock - requested
+                val newReserved = product.reservedStock - requested
+                db.productDao().updateStock(product.id, newPhysical, newReserved)
+                db.productDao().updateLastSoldTime(product.id, dispatchTime)
+                db.stockMovementDao().insert(
+                    StockMovementEntity(
+                        id = "MOV-${UUID.randomUUID().toString().take(8)}",
+                        productId = product.id,
+                        productName = product.name,
+                        timestamp = dispatchTime,
+                        movementType = MovementType.OUTWARD_DISPATCH,
+                        deltaQuantity = -requested,
+                        physicalBefore = product.physicalStock,
+                        physicalAfter = newPhysical,
+                        reservedBefore = product.reservedStock,
+                        reservedAfter = newReserved,
+                        referenceDoc = order.orderNumber,
+                        reason = "Dispatched Order ${order.orderNumber} to ${order.customerName}"
+                    )
                 )
-            )
+            }
 
             val customer = db.customerDao().getCustomerById(order.customerId)
             if (customer != null) {
-                val newBal = (customer.outstandingBalancePaise - amountPaise).coerceAtLeast(0L)
-                db.customerDao().insertOrUpdate(customer.copy(outstandingBalancePaise = newBal))
+                db.customerDao().insertOrUpdate(
+                    customer.copy(
+                        totalPurchasesPaise = customer.totalPurchasesPaise + order.totalPaise,
+                        outstandingBalancePaise = customer.outstandingBalancePaise + order.balanceDuePaise
+                    )
+                )
             }
+            db.orderDao().insertOrUpdate(order.copy(status = OrderStatus.DISPATCHED, dispatchedAt = dispatchTime))
+            Result.success(Unit)
         }
-
+        if (result.isFailure) return result
+        db.orderDao().getItemsForOrder(orderId).map { it.productId }.distinct().forEach { id ->
+            db.productDao().getProductById(id)?.let { checkAndTriggerLowStockAlert(it) }
+        }
         return Result.success(Unit)
+    }
+
+
+    suspend fun cancelOrder(orderId: String, reason: String): Result<Unit> {
+        return db.withTransaction {
+            val order = db.orderDao().getOrderById(orderId)
+                ?: return@withTransaction Result.failure<Unit>(IllegalStateException("Order $orderId not found."))
+            if (order.status == OrderStatus.DISPATCHED) {
+                return@withTransaction Result.failure<Unit>(IllegalStateException("Cannot cancel a dispatched order. Use the return workflow instead."))
+            }
+            if (order.status == OrderStatus.CANCELLED) {
+                return@withTransaction Result.failure<Unit>(IllegalStateException("Order is already cancelled."))
+            }
+            val items = db.orderDao().getItemsForOrder(orderId)
+            if (order.status == OrderStatus.CONFIRMED && items.isEmpty()) {
+                return@withTransaction Result.failure<Unit>(IllegalStateException("Confirmed order has no items; reconcile it before cancellation."))
+            }
+            if (order.status == OrderStatus.CONFIRMED && items.any { !it.quantity.isFinite() || it.quantity <= 0.0 }) {
+                return@withTransaction Result.failure<Unit>(IllegalStateException("Confirmed order has invalid quantities; reconcile it before cancellation."))
+            }
+            if (order.status == OrderStatus.CONFIRMED) {
+                val releaseByProduct = items.groupBy { it.productId }.mapValues { (_, lines) -> lines.sumOf { it.quantity } }
+                val productsById = mutableMapOf<String, ProductEntity>()
+                for ((productId, requested) in releaseByProduct) {
+                    val product = db.productDao().getProductById(productId)
+                        ?: return@withTransaction Result.failure<Unit>(IllegalStateException("A reserved order product no longer exists."))
+                    if (product.reservedStock < requested) {
+                        return@withTransaction Result.failure<Unit>(
+                            IllegalStateException("Reservation mismatch for '${product.name}'. Cannot safely release $requested units from ${product.reservedStock} reserved.")
+                        )
+                    }
+                    productsById[productId] = product
+                }
+                for ((productId, requested) in releaseByProduct) {
+                    val product = productsById[productId]!!
+                    val newReserved = product.reservedStock - requested
+                    db.productDao().updateStock(product.id, product.physicalStock, newReserved)
+                    db.stockMovementDao().insert(
+                        StockMovementEntity(
+                            id = "MOV-${UUID.randomUUID().toString().take(8)}",
+                            productId = product.id,
+                            productName = product.name,
+                            timestamp = System.currentTimeMillis(),
+                            movementType = MovementType.ORDER_RELEASE,
+                            deltaQuantity = 0.0,
+                            physicalBefore = product.physicalStock,
+                            physicalAfter = product.physicalStock,
+                            reservedBefore = product.reservedStock,
+                            reservedAfter = newReserved,
+                            referenceDoc = order.orderNumber,
+                            reason = "Released reservation upon order cancellation: $reason"
+                        )
+                    )
+                }
+            }
+            db.orderDao().insertOrUpdate(
+                order.copy(status = OrderStatus.CANCELLED, cancelledAt = System.currentTimeMillis(), cancellationReason = reason)
+            )
+            Result.success(Unit)
+        }
+    }
+
+
+    suspend fun recordOrderPayment(orderId: String, amountPaise: Long, method: String): Result<Unit> {
+        if (amountPaise <= 0L) return Result.failure(IllegalArgumentException("Payment amount must be greater than zero."))
+        if (method.isBlank()) return Result.failure(IllegalArgumentException("Select a payment method."))
+        return db.withTransaction {
+            val order = db.orderDao().getOrderById(orderId)
+                ?: return@withTransaction Result.failure<Unit>(IllegalStateException("Order $orderId not found."))
+            if (order.status == OrderStatus.CANCELLED) {
+                return@withTransaction Result.failure<Unit>(IllegalStateException("Cannot take payment for a cancelled order."))
+            }
+            val due = order.balanceDuePaise
+            if (due <= 0L) return@withTransaction Result.failure<Unit>(IllegalStateException("This order has no outstanding balance."))
+            if (amountPaise > due) {
+                return@withTransaction Result.failure<Unit>(IllegalArgumentException("Payment exceeds the current balance due of ${due.toRupeesString()}."))
+            }
+            val newPaid = order.paidPaise + amountPaise
+            val newStatus = when {
+                newPaid + order.returnedTotalPaise >= order.totalPaise -> PaymentStatus.PAID
+                newPaid > 0L -> PaymentStatus.PARTIAL
+                else -> PaymentStatus.UNPAID
+            }
+            db.orderDao().insertOrUpdate(order.copy(paidPaise = newPaid, paymentStatus = newStatus, paymentMethod = method))
+            val customer = db.customerDao().getCustomerById(order.customerId)
+            if (customer != null) {
+                db.customerDao().insertOrUpdate(
+                    customer.copy(outstandingBalancePaise = (customer.outstandingBalancePaise - amountPaise).coerceAtLeast(0L))
+                )
+            }
+            Result.success(Unit)
+        }
     }
 
     // -------------------------------------------------------------
