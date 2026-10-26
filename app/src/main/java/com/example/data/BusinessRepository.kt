@@ -28,15 +28,31 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
     val productVariants: Flow<List<ProductVariantEntity>> get() = variants
 
     suspend fun initializeIfEmpty() {
-        val existingSettings = db.settingsDao().getSettingsSync()
-        if (existingSettings == null) {
-            // New installations start with a clean workspace. Demo records remain
-            // available through the explicit "Reload Demo Data" action in Settings.
-            clearAllToFreshWorkspace(
-                businessName = "My Business",
-                ownerName = "",
-                gstin = ""
-            )
+        db.withTransaction {
+            if (db.settingsDao().getSettingsSync() == null) {
+                // Initialize only the missing workspace metadata. Never clear business
+                // tables just because a settings row is absent: that could erase existing
+                // products, orders, customers, or financial records.
+                db.settingsDao().saveSettings(
+                    BusinessSettingsEntity(
+                        businessName = "My Business",
+                        ownerName = "",
+                        gstin = "",
+                        industryProfile = IndustryProfile.CLOTHING_FASHION,
+                        isSetupComplete = true
+                    )
+                )
+                db.branchDao().insertOrUpdate(
+                    BranchEntity(
+                        id = "BRANCH-MAIN",
+                        name = "Main Store",
+                        address = "",
+                        city = "",
+                        phone = "",
+                        isPrimary = true
+                    )
+                )
+            }
         }
     }
 
