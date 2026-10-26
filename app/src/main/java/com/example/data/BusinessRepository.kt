@@ -580,41 +580,49 @@ class BusinessRepository(private val db: MerchSpringDatabase) {
     // Smart Reorder Recommendations Engine
     // -------------------------------------------------------------
     suspend fun computeReorderRecommendations(productsList: List<ProductEntity>): List<ReorderRecommendation> {
-        val suppliersList = db.supplierDao().getAllSuppliers().let { SampleData.suppliers }
-        val supplierMap = suppliersList.associateBy { it.name }
+        val suppliersList = db.supplierDao().getAllSuppliers().firstOrNull().orEmpty()
+        val supplierMap = suppliersList.associateBy { it.name.trim().lowercase(Locale.US) }
+        val now = System.currentTimeMillis()
+        val windowStart = now - 30L * 24L * 60L * 60L * 1000L
+        val salesOrders = db.orderDao().getAllOrders().firstOrNull().orEmpty().filter { order ->
+            order.status == OrderStatus.DISPATCHED && (order.dispatchedAt ?: order.createdAt) in windowStart..now
+        }
+        val dispatchedIds = salesOrders.map { it.id }.toSet()
+        val recentItems = db.orderDao().getAllOrderItems().filter { it.orderId in dispatchedIds }
+        val dailyVelocityByProduct = recentItems.groupBy { it.productId }.mapValues { (_, lines) ->
+            (lines.sumOf { (it.quantity - it.returnedQuantity).coerceAtLeast(0.0) } / 30.0)
+        }
 
         return productsList.mapNotNull { product ->
-            val supplier = supplierMap[product.preferredSupplier]
-            val leadDays = supplier?.leadTimeDays ?: 4
+            val supplier = suppliersList.firstOrNull { candidate ->
+                candidate.id.equals(product.preferredSupplier.trim(), ignoreCase = true) ||
+                    candidate.name.equals(product.preferredSupplier.trim(), ignoreCase = true)
+            } ?: supplierMap[product.preferredSupplier.trim().lowercase(Locale.US)]
+            val leadDays = supplier?.leadTimeDays?.coerceAtLeast(0) ?: 4
+            val velocity = dailyVelocityByProduct[product.id]?.takeIf { it.isFinite() && it > 0.0 } ?: 0.0
+            val daysOfCover = if (velocity > 0.0) product.availableStock / velocity else Double.POSITIVE_INFINITY
+            val approachingReorderPoint = velocity > 0.0 && daysOfCover <= leadDays + 3.0
 
-            // Realistic daily velocity based on sales history or stock activity
-            val velocity = when (product.sku) {
-                "APP-KT-001" -> 3.5 // Kurtis sell ~3.5 units/day
-                "ELC-EB-002" -> 2.0 // Earbuds ~2 units/day
-                "GRO-BR-003" -> 4.0 // Rice ~4 bags/day
-                "COS-SR-004" -> 2.5 // Serum ~2.5 bottles/day
-                "ELC-SW-005" -> 1.5 // Smart watch
-                else -> 1.0
-            }
-
-            val daysOfCover = if (velocity > 0) product.availableStock / velocity else 99.0
-
-            if (product.isOutOfStock || product.isLowStock || daysOfCover <= leadDays + 3) {
-                val targetBufferDays = 14.0 // 2 weeks of inventory cover
-                val neededUnits = ((targetBufferDays * velocity) - product.availableStock).coerceAtLeast(10.0)
-                val roundedQty = kotlin.math.ceil(neededUnits / 5.0) * 5.0 // rounded to batch of 5
+            if (product.isOutOfStock || product.isLowStock || approachingReorderPoint) {
+                val moq = product.moq.takeIf { it.isFinite() && it > 0.0 } ?: 1.0
+                val targetBufferDays = 14.0
+                val demandBasedNeed = (targetBufferDays * velocity - product.availableStock).coerceAtLeast(0.0)
+                val thresholdRecoveryNeed = (product.minStockThreshold + moq - product.availableStock).coerceAtLeast(0.0)
+                val requiredUnits = maxOf(demandBasedNeed, thresholdRecoveryNeed, moq)
+                val roundedQty = kotlin.math.ceil(requiredUnits / moq) * moq
                 val estimatedCost = (roundedQty * product.costPricePaise).toLong()
 
+                val daysText = if (daysOfCover.isFinite()) String.format(Locale.US, "%.1f", daysOfCover) else "unknown"
                 val reason = when {
-                    product.isOutOfStock -> "Critical: Available stock is 0. Projected stockout already impacting customer sales."
-                    product.isLowStock -> "Running Low: Stock is below minimum threshold (${product.minStockThreshold.toInt()} ${product.unit}). ~${String.format(Locale.US, "%.1f", daysOfCover)} days of cover remaining."
-                    else -> "Reorder Lead Time: Current ${product.availableStock.toInt()} units will last ~${String.format(Locale.US, "%.0f", daysOfCover)} days, closely approaching supplier lead time of $leadDays days."
-                }
+                    product.isOutOfStock -> "Critical: available stock is zero. Recent 30-day sales velocity: ${String.format(Locale.US, "%.2f", velocity)} ${product.unit}/day."
+                    product.isLowStock -> "Running low: available stock is below the configured threshold (${product.minStockThreshold} ${product.unit}). Estimated cover: $daysText days."
+                    else -> "Lead-time risk: estimated cover is $daysText days against a supplier lead time of $leadDays days."
+                } + if (supplier == null) " No preferred supplier matched; confirm the supplier manually." else " Preferred supplier: ${supplier.name}."
 
                 ReorderRecommendation(
                     product = product,
                     dailySalesVelocity = velocity,
-                    daysOfCoverRemaining = daysOfCover,
+                    daysOfCoverRemaining = daysOfCover.takeIf { it.isFinite() } ?: 0.0,
                     recommendedOrderQty = roundedQty,
                     estimatedCostPaise = estimatedCost,
                     reasonExplanation = reason
