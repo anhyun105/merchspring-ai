@@ -462,14 +462,30 @@ fun PosQuickBillingScreen(viewModel: MainViewModel) {
                             val normalizedName = customerNameInput.trim()
                             val normalizedPhone = customerPhoneInput.trim()
                             val walkInName = "Walk-in Retail Customer"
-                            val matchingCustomer = customers.firstOrNull { customer ->
-                                (normalizedName.isNotBlank() && customer.name.equals(normalizedName, ignoreCase = true)) ||
-                                    (normalizedPhone.isNotBlank() && customer.phone.trim() == normalizedPhone)
+                            val matchingByName = if (normalizedName.isBlank()) emptyList() else customers.filter {
+                                it.name.equals(normalizedName, ignoreCase = true)
+                            }
+                            val matchingByPhone = if (normalizedPhone.isBlank()) emptyList() else customers.filter {
+                                it.phone.trim() == normalizedPhone
+                            }
+                            if ((normalizedPhone.isNotBlank() && matchingByPhone.size > 1) ||
+                                (normalizedPhone.isBlank() && matchingByName.size > 1)) {
+                                viewModel.snackbarMessage.value = "More than one customer matches those details. Enter a unique phone number before checkout."
+                                return@Button
+                            }
+                            val matchingCustomer = if (normalizedPhone.isNotBlank()) {
+                                matchingByPhone.singleOrNull()
+                            } else {
+                                matchingByName.singleOrNull()
+                            }
+                            if (matchingCustomer != null && normalizedName.isNotBlank() &&
+                                !matchingCustomer.name.equals(normalizedName, ignoreCase = true)) {
+                                viewModel.snackbarMessage.value = "The customer name does not match the entered phone number. Check the details before checkout."
+                                return@Button
                             }
                             val isCreditSale = paymentMethod.equals("Credit", ignoreCase = true)
-                            if (isCreditSale && (matchingCustomer == null &&
-                                    (normalizedName.isBlank() || normalizedName.equals(walkInName, ignoreCase = true)))) {
-                                viewModel.snackbarMessage.value = "Credit sales require a named customer. Enter the customer name and phone before checkout."
+                            if (isCreditSale && (normalizedName.isBlank() || normalizedName.equals(walkInName, ignoreCase = true))) {
+                                viewModel.snackbarMessage.value = "Credit sales require a named customer. Enter the customer name before checkout."
                                 return@Button
                             }
 
