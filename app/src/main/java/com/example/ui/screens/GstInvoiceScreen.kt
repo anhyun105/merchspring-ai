@@ -232,7 +232,7 @@ fun GstInvoiceScreen(
                                 Text(item.productName, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MidnightNavy)
                                 Text("SKU: ${item.sku}", fontSize = 9.sp, color = MutedSlate)
                             }
-                            Text("${item.quantity.toInt()}", fontSize = 11.sp, color = DarkSlate, modifier = Modifier.weight(0.8f))
+                            Text(if (item.quantity % 1.0 == 0.0) item.quantity.toLong().toString() else String.format(java.util.Locale.US, "%.3f", item.quantity).trimEnd('0').trimEnd('.'), fontSize = 11.sp, color = DarkSlate, modifier = Modifier.weight(0.8f))
                             Text(item.unitPricePaise.toRupeesString(), fontSize = 11.sp, color = DarkSlate, modifier = Modifier.weight(1.2f))
                             Text("${item.gstRate.toInt()}%", fontSize = 11.sp, color = DarkSlate, modifier = Modifier.weight(0.8f))
                             Text(item.totalPaise.toRupeesString(), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MidnightNavy, modifier = Modifier.weight(1.3f))
